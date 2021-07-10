@@ -51,8 +51,9 @@ echo -e "容器启动成功..."
 echo -e "\n请先访问5700端口，登录成功面板之后再执行添加定时任务..."
 echo -e "############################################################\n"
 
-crond -f >/dev/null
+echo -e "启动扫码程序"
+cd /ql/JDC && nohup ./JDC &
 
-/ql/JDC
+crond -f >/dev/null
 
 exec "$@"

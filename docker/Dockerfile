@@ -1,7 +1,8 @@
 FROM node:lts-alpine
 LABEL maintainer="whyour"
-ARG QL_URL=https://github.com.cnpmjs.org/whyour/qinglong
-ARG QL_BRANCH=master
+ARG QL_URL=https://gitee.com/getready/qinglong.git
+ARG QL_BRANCH=qinglong
+ARG QL_STATIC_BRANCH=qinglong-static
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=zh_CN.UTF-8 \
     SHELL=/bin/bash \
@@ -44,14 +45,16 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
     && rm -rf /root/.npm \
     && pnpm install --prod \
     && rm -rf /root/.pnpm-store \
-    && git clone -b ${QL_BRANCH} https://github.com.cnpmjs.org/whyour/qinglong /static \
+    && git clone -b ${QL_STATIC_BRANCH} ${QL_URL} /static \
     && cp -rf /static/* ${QL_DIR} \
     && rm -rf /static \
     && mkdir ~/.pip/ \
     && echo "[global]" > ~/.pip/pip.conf \
     && echo "index-url = https://pypi.tuna.tsinghua.edu.cn/simple" > ~/.pip/pip.conf
 
-ADD JDC ${QL_DIR}
-RUN chmod 777 ${QL_DIR}/JDC
+ADD JDC ${QL_DIR}/JDC
+RUN chmod 777 ${QL_DIR}/JDC/JDC
+
+ADD docker-entrypoint.sh ${QL_DIR}/docker/
 
 ENTRYPOINT ["./docker/docker-entrypoint.sh"]

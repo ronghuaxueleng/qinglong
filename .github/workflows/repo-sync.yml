@@ -24,14 +24,14 @@ jobs:
           source_branch: "master"
           destination_branch: "qinglong"
           github_token: ${{ secrets.PAT }}
-      - name: 开始🔄自动同步青龙仓库🔄
+      - name: 开始🔄自动同步青龙静态文件仓库🔄
         uses: repo-sync/github-sync@v2
         with:
           source_repo: "https://github.com/whyour/qinglong-static.git"
           source_branch: "master"
           destination_branch: "qinglong-static"
           github_token: ${{ secrets.PAT }}
-      - name: sync github -> gitee
+      - name: 同步到gitee
         uses: Yikun/hub-mirror-action@master
         with:
           src: github/ronghuaxueleng

@@ -17208,7 +17208,7 @@ packages:
     dev: true
 
   file:node-sqlite3-1.0.3:
-    resolution: {directory: node-sqlite3-1.0.3, type: directory}
+    resolution: {directory: ./node-sqlite3-1.0.3, type: directory}
     name: '@whyour/sqlite3'
     version: 1.0.3
     requiresBuild: true

@@ -9,6 +9,9 @@ export class Env {
   position?: number;
   name?: string;
   remarks?: string;
+  sourcetype?: string;
+  createtime?: string;
+  username?: string;
 
   constructor(options: Env) {
     this.value = options.value;
@@ -21,6 +24,9 @@ export class Env {
     this.position = options.position;
     this.name = options.name;
     this.remarks = options.remarks;
+    this.sourcetype = options.sourcetype;
+    this.createtime = options.createtime || new Date().toString();
+    this.username = options.username;
   }
 }
 
@@ -42,4 +48,7 @@ export const EnvModel = sequelize.define<EnvInstance>('Env', {
   position: DataTypes.NUMBER,
   name: { type: DataTypes.STRING, unique: 'compositeIndex' },
   remarks: DataTypes.STRING,
+  sourcetype: DataTypes.STRING,
+  createtime: DataTypes.STRING,
+  username: DataTypes.STRING,
 });

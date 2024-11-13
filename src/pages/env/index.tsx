@@ -98,7 +98,7 @@ const Env = () => {
       title: intl.get('值'),
       dataIndex: 'value',
       key: 'value',
-      width: '35%',
+      width: '10%',
       render: (text: string, record: any) => {
         return (
           <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -114,6 +114,43 @@ const Env = () => {
       title: intl.get('备注'),
       dataIndex: 'remarks',
       key: 'remarks',
+      width: '15%',
+      render: (text: string, record: any) => {
+        return (
+          <Tooltip title={text} placement="topLeft">
+            <div className="text-ellipsis">{text}</div>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: intl.get('用户名'),
+      dataIndex: 'username',
+      key: 'username',
+      render: (text: string, record: any) => {
+        return (
+          <Tooltip title={text} placement="topLeft">
+            <div className="text-ellipsis">{text}</div>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: intl.get('数据来源'),
+      dataIndex: 'sourcetype',
+      key: 'sourcetype',
+      render: (text: string, record: any) => {
+        return (
+          <Tooltip title={text} placement="topLeft">
+            <div className="text-ellipsis">{text}</div>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: intl.get('创建时间'),
+      dataIndex: 'createtime',
+      key: 'createtime',
       render: (text: string, record: any) => {
         return (
           <Tooltip title={text} placement="topLeft">
@@ -493,7 +530,14 @@ const Env = () => {
   const exportEnvs = () => {
     const envs = value
       .filter((x) => selectedRowIds.includes(x.id))
-      .map((x) => ({ value: x.value, name: x.name, remarks: x.remarks }));
+      .map((x) => ({ 
+        value: x.value, 
+        name: x.name, 
+        remarks: x.remarks, 
+        sourcetype: x.sourcetype,
+        username: x.username,
+        createtime: x.createtime
+      }));
     exportJson('env.json', JSON.stringify(envs));
   };
 

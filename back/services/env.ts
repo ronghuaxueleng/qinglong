@@ -141,6 +141,12 @@ export default class EnvService {
           {
             remarks: reg,
           },
+          {
+            sourcetype: reg,
+          },
+          {
+            username: reg,
+          }
         ],
       };
     }

@@ -18,7 +18,7 @@ const EnvModal = ({
 
   const handleOk = async (values: any) => {
     setLoading(true);
-    const { value, split, name, remarks } = values;
+    const { value, split, name, remarks, sourcetype, username, createtime } = values;
     const method = env ? 'put' : 'post';
     let payload;
     if (!env) {
@@ -29,10 +29,13 @@ const EnvModal = ({
             name: name,
             value: x,
             remarks: remarks,
+            sourcetype: sourcetype,
+            username: username,
+            createtime: createtime
           };
         });
       } else {
-        payload = [{ value, name, remarks }];
+        payload = [{ value, name, remarks, sourcetype, username, createtime }];
       }
     } else {
       payload = { ...values, id: env.id };
@@ -128,6 +131,12 @@ const EnvModal = ({
         </Form.Item>
         <Form.Item name="remarks" label={intl.get('备注')}>
           <Input placeholder={intl.get('请输入备注')} />
+        </Form.Item>
+        <Form.Item name="sourcetype" label={intl.get('数据来源')}>
+          <Input placeholder={intl.get('请输入数据来源')} />
+        </Form.Item>
+        <Form.Item name="username" label={intl.get('用户名')}>
+          <Input placeholder={intl.get('请输入用户名')} />
         </Form.Item>
       </Form>
     </Modal>

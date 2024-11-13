@@ -44,6 +44,9 @@ export default (app: Router) => {
             .required()
             .pattern(/^[a-zA-Z_][0-9a-zA-Z_]*$/),
           remarks: Joi.string().optional().allow(''),
+          sourcetype: Joi.string().optional().allow('').allow(null),
+          username: Joi.string().optional().allow('').allow(null),
+          createtime: Joi.string().optional().allow('').allow(null),
         }),
       ),
     }),
@@ -69,6 +72,9 @@ export default (app: Router) => {
         value: Joi.string().required(),
         name: Joi.string().required(),
         remarks: Joi.string().optional().allow('').allow(null),
+        sourcetype: Joi.string().optional().allow('').allow(null),
+        username: Joi.string().optional().allow('').allow(null),
+        createtime: Joi.string().optional().allow('').allow(null),
         id: Joi.number().required(),
       }),
     }),
@@ -214,6 +220,9 @@ export default (app: Router) => {
               name: x.name,
               value: x.value,
               remarks: x.remarks,
+              sourcetype: x.sourcetype,
+              username: x.username,
+              createtime: x.createtime
             })),
           );
           return res.send({ code: 200, data: result });

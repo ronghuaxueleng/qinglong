@@ -1,5 +1,6 @@
 FROM python:3.10-alpine3.18 AS builder
 COPY package.json .npmrc pnpm-lock.yaml /tmp/build/
+COPY node-sqlite3-1.0.3 /tmp/build/
 RUN set -x \
   && apk update \
   && apk add nodejs npm git \

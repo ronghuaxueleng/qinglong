@@ -39,8 +39,6 @@ jobs:
 
       - name: build front and back
         run: |
-          mkdir -p /tmp/build
-          cp -r node-sqlite3-1.0.3 /tmp/build/node-sqlite3-1.0.3
           pnpm install --frozen-lockfile
           pnpm build:front
           pnpm build:back

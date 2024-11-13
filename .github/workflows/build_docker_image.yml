@@ -14,17 +14,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  to_gitlab:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: pixta-dev/repository-mirroring-action@v1
-        with:
-          target_repo_url: git@gitlab.com:ronghuaxueleng/qinglong.git
-          ssh_private_key: ${{ secrets.GITLAB_SSH_PK }}
-
   to_gitee:
     runs-on: ubuntu-latest
     steps:

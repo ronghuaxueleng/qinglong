@@ -147,7 +147,6 @@ jobs:
           echo ${{ steps.docker_build.outputs.digest }}
   
   build310:
-    if: ${{ github.ref_name == 'master' }}
     needs: build-static
 
     runs-on: ubuntu-20.04

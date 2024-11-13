@@ -59,7 +59,6 @@ jobs:
           GITHUB_REPO: github.com/${{ github.repository_owner }}/qinglong-static
           GITHUB_BRANCH: ${{ github.ref_name }}
           REPO_GITEE: git@gitee.com:ronghuaxueleng/qinglong-static.git
-          REPO_GITLAB: git@gitlab.com:ronghuaxueleng/qinglong-static.git
           PRIVATE_KEY: ${{ secrets.GITLAB_SSH_PK }}
         run: |
           mkdir -p tmp
@@ -77,10 +76,8 @@ jobs:
 
           export GIT_SSH_COMMAND="ssh -v -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -l git"
           git remote add gitee "${REPO_GITEE}"
-          git remote add gitlab "${REPO_GITLAB}"
           git gc
           git push --force --quiet gitee ${GITHUB_BRANCH}:${GITHUB_BRANCH}
-          git push --force --quiet gitlab ${GITHUB_BRANCH}:${GITHUB_BRANCH}
 
   build:
     needs: build-static

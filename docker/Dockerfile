@@ -1,9 +1,10 @@
 FROM python:3.11-alpine3.18 AS builder
 COPY package.json .npmrc pnpm-lock.yaml /tmp/build/
 COPY node-sqlite3-1.0.3 /tmp/build/
+RUN npm config set registry https://registry.npmmirror.com
 RUN set -x \
   && apk update \
-  && apk add nodejs npm git \
+  && apk add make nodejs npm git \
   && npm i -g pnpm@8.3.1 pm2 ts-node \
   && cd /tmp/build \
   && pnpm install --prod
@@ -35,6 +36,7 @@ RUN set -x \
   && apk update -f \
   && apk upgrade \
   && apk --no-cache add -f bash \
+  make \
   coreutils \
   git \
   curl \

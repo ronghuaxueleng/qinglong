@@ -1,7 +1,7 @@
 lockfileVersion: '6.0'
 
 overrides:
-  sqlite3: git+https://github.com/whyour/node-sqlite3.git#v1.0.3
+  sqlite3: file:node-sqlite3-1.0.3
 
 dependencies:
   '@bufbuild/protobuf':
@@ -131,8 +131,8 @@ dependencies:
     specifier: ^0.3.24
     version: 0.3.24
   sqlite3:
-    specifier: git+https://github.com/whyour/node-sqlite3.git#v1.0.3
-    version: github.com/whyour/node-sqlite3/3a00af0b5d7603b7f1b290032507320b18a6b741
+    specifier: file:/mnt/e/GitHub/qinglong/node-sqlite3-1.0.3
+    version: file:node-sqlite3-1.0.3
   toad-scheduler:
     specifier: ^3.0.1
     version: 3.0.1
@@ -2824,7 +2824,7 @@ packages:
     resolution: {integrity: sha512-Ngs9jhElXN7efS9WvvCC/p6rXMbihna8eNLVBc421Zf+VcFd+pR4DOcS6yA9V22EKtAy4DEj7LtvEEIm0bb80A==}
     engines: {node: '>= 18'}
     dependencies:
-      sqlite3: github.com/whyour/node-sqlite3/3a00af0b5d7603b7f1b290032507320b18a6b741
+      sqlite3: file:node-sqlite3-1.0.3
     transitivePeerDependencies:
       - bluebird
       - encoding
@@ -14377,7 +14377,7 @@ packages:
       retry-as-promised: 7.0.4
       semver: 7.6.3
       sequelize-pool: 7.1.0
-      sqlite3: github.com/whyour/node-sqlite3/3a00af0b5d7603b7f1b290032507320b18a6b741
+      sqlite3: file:node-sqlite3-1.0.3
       toposort-class: 1.0.1
       uuid: 8.3.2
       validator: 13.12.0
@@ -16358,8 +16358,8 @@ packages:
     resolution: {integrity: sha512-XBx9AXhXktjUqnepgTiE5flcKIYWi/rme0Eaj+5Y0lftuGBq+jyRu/md4WnuxqgP1ubdpNCsYEYPxrzVHD8d6g==}
     dev: true
 
-  github.com/whyour/node-sqlite3/3a00af0b5d7603b7f1b290032507320b18a6b741:
-    resolution: {commit: 3a00af0b5d7603b7f1b290032507320b18a6b741, repo: git+ssh://git@github.com/whyour/node-sqlite3.git, type: git}
+  file:node-sqlite3-1.0.3:
+    resolution: {directory: node-sqlite3-1.0.3, type: directory}
     name: '@whyour/sqlite3'
     version: 1.0.3
     requiresBuild: true

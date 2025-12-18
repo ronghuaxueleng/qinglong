@@ -25,11 +25,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
+          node-version: "20"
           cache: "pnpm"
 
       - name: build front and back
         run: |
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
           pnpm build:front
           pnpm build:back
 

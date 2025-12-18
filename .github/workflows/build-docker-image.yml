@@ -12,8 +12,12 @@ jobs:
           fetch-depth: 0
       - uses: Yikun/hub-mirror-action@master
         with:
-          target_repo_url: git@gitee.com:getready/qinglong.git
-          ssh_private_key: ${{ secrets.GITLAB_SSH_PK }}
+          src: github/${{ github.repository_owner }}
+          dst: gitee/getready
+          dst_key: ${{ secrets.GITLAB_SSH_PK }}
+          dst_token: ${{ secrets.GITEE_TOKEN }}
+          static_list: "qinglong"
+          force_update: true
 
   build-static:
     runs-on: ubuntu-latest

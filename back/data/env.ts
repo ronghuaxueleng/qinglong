@@ -1,5 +1,5 @@
+import { DataTypes, Model } from 'sequelize';
 import { sequelize } from '.';
-import { DataTypes, Model, ModelDefined } from 'sequelize';
 
 export class Env {
   value?: string;
@@ -12,6 +12,7 @@ export class Env {
   sourcetype?: string;
   createtime?: string;
   username?: string;
+  isPinned?: 1 | 0;
 
   constructor(options: Env) {
     this.value = options.value;
@@ -23,10 +24,11 @@ export class Env {
     this.timestamp = new Date().toString();
     this.position = options.position;
     this.name = options.name;
-    this.remarks = options.remarks;
+    this.remarks = options.remarks || '';
     this.sourcetype = options.sourcetype;
     this.createtime = options.createtime || new Date().toString();
     this.username = options.username;
+    this.isPinned = options.isPinned || 0;
   }
 }
 
@@ -51,4 +53,5 @@ export const EnvModel = sequelize.define<EnvInstance>('Env', {
   sourcetype: DataTypes.STRING,
   createtime: DataTypes.STRING,
   username: DataTypes.STRING,
+  isPinned: DataTypes.NUMBER,
 });

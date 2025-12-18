@@ -3,6 +3,7 @@
 dir_shell=$QL_DIR/shell
 . $dir_shell/share.sh
 . $dir_shell/api.sh
+load_ql_envs
 . $dir_shell/env.sh
 
 send_mark=$dir_shell/send_mark
@@ -212,20 +213,25 @@ run_extra_shell() {
 
 ## 脚本用法
 usage() {
-  echo -e "ql命令使用方法："
-  echo -e "1. $cmd_update update                                                                  # 更新并重启青龙"
-  echo -e "2. $cmd_update extra                                                                   # 运行自定义脚本"
-  echo -e "3. $cmd_update raw <fileurl>                                                            # 更新单个脚本文件"
-  echo -e "4. $cmd_update repo <repourl> <path> <blacklist> <dependence> <branch> <extensions>    # 更新单个仓库的脚本"
-  echo -e "5. $cmd_update rmlog <days>                                                            # 删除旧日志"
-  echo -e "6. $cmd_update bot                                                                     # 启动tg-bot"
-  echo -e "7. $cmd_update check                                                                   # 检测青龙环境并修复"
-  echo -e "8. $cmd_update resetlet                                                                # 重置登录错误次数"
-  echo -e "9. $cmd_update resettfa                                                                # 禁用两步登录"
+  echo -e "$cmd_update 命令使用方法："
+  echo -e "1.  $cmd_update update                                                                  # 更新并重启青龙"
+  echo -e "2.  $cmd_update extra                                                                   # 运行自定义脚本"
+  echo -e "3.  $cmd_update raw <fileurl>                                                           # 更新单个脚本文件"
+  echo -e "4.  $cmd_update repo <repourl> <path> <blacklist> <dependence> <branch> <extensions>    # 更新单个仓库的脚本"
+  echo -e "5.  $cmd_update rmlog <days>                                                            # 删除旧日志"
+  echo -e "6.  $cmd_update bot                                                                     # 启动tg-bot"
+  echo -e "7.  $cmd_update check                                                                   # 检测青龙环境并修复"
+  echo -e "8.  $cmd_update resetlet                                                                # 重置登录错误次数"
+  echo -e "9.  $cmd_update resettfa                                                                # 禁用两步登录"
+  echo -e "10. $cmd_update resetpwd                                                                # 修改登录密码"
+  echo -e "11. $cmd_update resetname                                                               # 修改登录用户名"
 }
 
 reload_qinglong() {
+  echo -e "[reload_qinglong] deleting Triggered at $(date)" >>${dir_log}/reload.log
+  sleep 3
   delete_pm2
+  echo -e "[reload_qinglong] deleted Triggered at $(date)" >>${dir_log}/reload.log
 
   local reload_target="${1}"
   local primary_branch="master"
@@ -245,8 +251,9 @@ reload_qinglong() {
     rm -rf ${dir_data}/*
     mv -f ${dir_tmp}/data/* ${dir_data}/
   fi
-
+  echo -e "[reload_qinglong] starting Triggered at $(date)" >>${dir_log}/reload.log
   reload_pm2
+  echo -e "[reload_qinglong] started Triggered at $(date)\n" >>${dir_log}/reload.log
 }
 
 ## 更新 qinglong
@@ -307,15 +314,7 @@ check_update_dep() {
     echo -e "更新包下载成功..."
 
     if [[ "$needRestart" == 'true' ]]; then
-      delete_pm2
-
-      rm -rf ${dir_root}/back ${dir_root}/cli ${dir_root}/docker ${dir_root}/sample ${dir_root}/shell ${dir_root}/src
-      mv -f ${dir_tmp}/qinglong-${primary_branch}/* ${dir_root}/
-      rm -rf $dir_static/*
-      mv -f ${dir_tmp}/qinglong-static-${primary_branch}/* ${dir_static}/
-      cp -f $file_config_sample $dir_config/config.sample.sh
-
-      reload_pm2
+      reload_qinglong "system"
     fi
   else
     echo -e "\n依赖检测安装失败，请检查网络...\n"
@@ -489,13 +488,14 @@ main() {
   local time_format="%Y-%m-%d %H:%M:%S"
   local time=$(date "+$time_format")
   local begin_timestamp=$(format_timestamp "$time_format" "$time")
-  [[ $ID ]] && update_cron "\"$ID\"" "0" "$$" "$log_path" "$begin_timestamp"
 
   local begin_time=$(format_time "$time_format" "$time")
 
   if [[ "$p1" != "repo" ]] && [[ "$p1" != "raw" ]]; then
     eval echo -e "\#\# 开始执行... $begin_time\\\n" $cmd
   fi
+
+  [[ $ID ]] && update_cron "\"$ID\"" "0" "$$" "$log_path" "$begin_timestamp"
 
   case $p1 in
   update)
@@ -537,14 +537,16 @@ main() {
     eval . $dir_shell/check.sh $cmd
     ;;
   resetlet)
-    auth_value=$(cat $file_auth_user | jq '.retries =0' -c)
-    echo "$auth_value" >$file_auth_user
-    eval echo -e "重置登录错误次数成功" $cmd
+    eval update_auth_config "\\\"retries\\\":0" "重置登录错误次数" $cmd
     ;;
   resettfa)
-    auth_value=$(cat $file_auth_user | jq '.twoFactorActivated =false' | jq '.twoFactorActived =false' -c)
-    echo "$auth_value" >$file_auth_user
-    eval echo -e "禁用两步验证成功" $cmd
+    eval update_auth_config "\\\"twoFactorActivated\\\":false" "禁用两步验证" $cmd
+    ;;
+  resetpwd)
+    eval update_auth_config "\\\"password\\\":\\\"$p2\\\"" "重置密码" $cmd
+    ;;
+  resetname)
+    eval update_auth_config "\\\"username\\\":\\\"$p2\\\"" "重置用户名" $cmd
     ;;
   *)
     eval echo -e "命令输入错误...\\\n" $cmd
@@ -556,7 +558,7 @@ main() {
   local end_time=$(format_time "$time_format" "$etime")
   local end_timestamp=$(format_timestamp "$time_format" "$etime")
   local diff_time=$(($end_timestamp - $begin_timestamp))
-  [[ $ID ]] && update_cron "\"$ID\"" "1" "" "$log_path" "$begin_timestamp" "$diff_time"
+  [[ $ID ]] && update_cron "\"$ID\"" "1" "$$" "$log_path" "$begin_timestamp" "$diff_time"
 
   if [[ "$p1" != "repo" ]] && [[ "$p1" != "raw" ]]; then
     eval echo -e "\\\n\#\# 执行结束... $end_time  耗时 $diff_time 秒　　　　　" $cmd

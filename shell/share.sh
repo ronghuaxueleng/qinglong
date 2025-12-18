@@ -48,8 +48,6 @@ export file_notify_py=$dir_scripts/notify.py
 export file_notify_js=$dir_scripts/sendNotify.js
 export file_test_js=$dir_scripts/ql_sample.js
 export file_test_py=$dir_scripts/ql_sample.py
-export nginx_app_conf=$dir_root/docker/front.conf
-export nginx_conf=$dir_root/docker/nginx.conf
 export dep_notify_py=$dir_dep/notify.py
 export dep_notify_js=$dir_dep/sendNotify.js
 
@@ -61,30 +59,40 @@ list_own_user=$dir_list_tmp/own_user.list
 list_own_add=$dir_list_tmp/own_add.list
 list_own_drop=$dir_list_tmp/own_drop.list
 
-## 软连接及其原始文件对应关系
 link_name=(
   task
   ql
 )
-original_name=(
-  task.sh
-  update.sh
-)
 
 init_env() {
-  export NODE_PATH=/usr/local/bin:/usr/local/pnpm-global/5/node_modules:/usr/local/lib/node_modules:/root/.local/share/pnpm/global/5/node_modules
+  local pnpm_global_path=$(pnpm root -g 2>/dev/null)
+  export NODE_PATH="/usr/local/bin:/usr/local/lib/node_modules${pnpm_global_path:+:${pnpm_global_path}}"
+
+  # 如果存在 pnpm 全局路径，创建软链接
+  if [[ -n "$pnpm_global_path" ]]; then
+    # 确保目标目录存在
+    mkdir -p "${dir_root}/node_modules"
+    # 链接全局模块到项目的 node_modules
+    ln -sf "${pnpm_global_path}/"* "${dir_root}/node_modules/" 2>/dev/null || true
+  fi
+
   export PYTHONUNBUFFERED=1
+}
+
+load_ql_envs() {
+  ql_base_url=${QlBaseUrl:-"/"}
+  ql_port=${QlPort:-"5700"}
+  ql_grpc_port=${QlGrpcPort:-"5500"}
+  current_branch=${QL_BRANCH:-""}
 }
 
 import_config() {
   [[ -f $file_config_user ]] && . $file_config_user
 
-  ql_base_url=${QlBaseUrl:-"/"}
-  ql_port=${QlPort:-"5700"}
+  load_ql_envs
   command_timeout_time=${CommandTimeoutTime:-""}
   file_extensions=${RepoFileExtensions:-"js py"}
   proxy_url=${ProxyUrl:-""}
-  current_branch=${QL_BRANCH:-""}
 
   if [[ -n "${DefaultCronRule}" ]]; then
     default_cron="${DefaultCronRule}"
@@ -170,73 +178,43 @@ fix_config() {
   make_dir $dir_dep
 
   if [[ ! -s $file_config_user ]]; then
-    echo -e "复制一份 $file_config_sample 为 $file_config_user，随后请按注释编辑你的配置文件：$file_config_user\n"
-    cp -fv $file_config_sample $file_config_user
-    echo
+    cp -f $file_config_sample $file_config_user
   fi
 
   if [[ ! -f $file_task_before ]]; then
-    echo -e "复制一份 $file_task_sample 为 $file_task_before\n"
-    cp -fv $file_task_sample $file_task_before
-    echo
+    cp -f $file_task_sample $file_task_before
   fi
 
   if [[ ! -f $file_task_after ]]; then
-    echo -e "复制一份 $file_task_sample 为 $file_task_after\n"
-    cp -fv $file_task_sample $file_task_after
-    echo
+    cp -f $file_task_sample $file_task_after
   fi
 
   if [[ ! -f $file_extra_shell ]]; then
-    echo -e "复制一份 $file_extra_sample 为 $file_extra_shell\n"
-    cp -fv $file_extra_sample $file_extra_shell
-    echo
-  fi
-
-  if [[ ! -s $file_auth_user ]]; then
-    echo -e "复制一份 $file_auth_sample 为 $file_auth_user\n"
-    cp -fv $file_auth_sample $file_auth_user
-    echo
+    cp -f $file_extra_sample $file_extra_shell
   fi
 
   if [[ ! -s $file_notify_py ]]; then
-    echo -e "复制一份 $file_notify_py_sample 为 $file_notify_py\n"
-    cp -fv $file_notify_py_sample $file_notify_py
-    echo
+    cp -f $file_notify_py_sample $file_notify_py
   fi
 
   if [[ ! -s $file_notify_js ]]; then
-    echo -e "复制一份 $file_notify_js_sample 为 $file_notify_js\n"
-    cp -fv $file_notify_js_sample $file_notify_js
-    echo
+    cp -f $file_notify_js_sample $file_notify_js
   fi
 
   if [[ ! -s $file_test_js ]]; then
-    cp -fv $file_test_js_sample $file_test_js
-    echo
+    cp -f $file_test_js_sample $file_test_js
   fi
 
   if [[ ! -s $file_test_py ]]; then
-    cp -fv $file_test_py_sample $file_test_py
-    echo
-  fi
-
-  if [[ -s /etc/nginx/conf.d/default.conf ]]; then
-    echo -e "检测到默认nginx配置文件，清空...\n"
-    cat /dev/null >/etc/nginx/conf.d/default.conf
-    echo
+    cp -f $file_test_py_sample $file_test_py
   fi
 
   if [[ ! -s $dep_notify_js ]]; then
-    echo -e "复制一份 $file_notify_js_sample 为 $dep_notify_js\n"
-    cp -fv $file_notify_js_sample $dep_notify_js
-    echo
+    cp -f $file_notify_js_sample $dep_notify_js
   fi
 
   if [[ ! -s $dep_notify_py ]]; then
-    echo -e "复制一份 $file_notify_py_sample 为 $dep_notify_py\n"
-    cp -fv $file_notify_py_sample $dep_notify_py
-    echo
+    cp -f $file_notify_py_sample $dep_notify_py
   fi
 
 }
@@ -294,21 +272,35 @@ random_range() {
 
 delete_pm2() {
   cd $dir_root
-  pm2 delete ecosystem.config.js
+  # Try to delete PM2 processes, but don't fail if PM2 is not available
+  pm2 delete ecosystem.config.js 2>/dev/null || true
+  # Also try to kill any directly spawned node processes
+  pkill -f "node.*static/build/app.js" 2>/dev/null || true
 }
 
 reload_pm2() {
   cd $dir_root
   restore_env_vars
-  pm2 flush &>/dev/null
-  pm2 startOrGracefulReload ecosystem.config.js
-}
-
-reload_update() {
-  cd $dir_root
-  restore_env_vars
-  pm2 flush &>/dev/null
-  pm2 startOrGracefulReload other.config.js
+  
+  # Try to start PM2, but handle failures gracefully
+  if pm2 flush &>/dev/null && pm2 startOrGracefulReload ecosystem.config.js --update-env; then
+    return 0
+  else
+    local exit_code=$?
+    echo "警告: PM2 启动失败 (退出码: $exit_code)，可能是由于硬件不兼容"
+    echo "正在尝试直接使用 Node.js 启动服务..."
+    
+    # Kill any existing node processes for qinglong
+    pkill -f "node.*static/build/app.js" 2>/dev/null || true
+    
+    # Start node directly in the background
+    nohup node static/build/app.js > $dir_log/qinglong.log 2>&1 &
+    local node_pid=$!
+    
+    echo "已使用 Node.js 直接启动服务 (PID: $node_pid)"
+    echo "注意: 使用此模式时，部分 PM2 管理功能将不可用"
+    return 0
+  fi
 }
 
 diff_time() {
@@ -357,79 +349,6 @@ format_timestamp() {
   fi
 }
 
-patch_version() {
-  git config --global pull.rebase false
-
-  if [[ -f "$dir_root/db/cookie.db" ]]; then
-    echo -e "检测到旧的db文件，拷贝为新db...\n"
-    mv $dir_root/db/cookie.db $dir_root/db/env.db
-    rm -rf $dir_root/db/cookie.db
-    echo
-  fi
-
-  if [[ -d "$dir_root/db" ]]; then
-    echo -e "检测到旧的db目录，拷贝到data目录...\n"
-    cp -rf $dir_root/config $dir_data
-    echo
-  fi
-
-  if [[ -d "$dir_root/scripts" ]]; then
-    echo -e "检测到旧的scripts目录，拷贝到data目录...\n"
-    cp -rf $dir_root/scripts $dir_data
-    echo
-  fi
-
-  if [[ -d "$dir_root/log" ]]; then
-    echo -e "检测到旧的log目录，拷贝到data目录...\n"
-    cp -rf $dir_root/log $dir_data
-    echo
-  fi
-
-  if [[ -d "$dir_root/config" ]]; then
-    echo -e "检测到旧的config目录，拷贝到data目录...\n"
-    cp -rf $dir_root/config $dir_data
-    echo
-  fi
-}
-
-init_nginx() {
-  cp -fv $nginx_conf /etc/nginx/nginx.conf
-  cp -fv $nginx_app_conf /etc/nginx/conf.d/front.conf
-  local location_url="/"
-  local aliasStr=""
-  local rootStr=""
-  if [[ $ql_base_url != "/" ]]; then
-    if [[ $ql_base_url != /* ]]; then
-      ql_base_url="/$ql_base_url"
-    fi
-    if [[ $ql_base_url != */ ]]; then
-      ql_base_url="$ql_base_url/"
-    fi
-    location_url="^~${ql_base_url%*/}"
-    aliasStr="alias ${dir_static}/dist;"
-    if ! grep -q "<base href=\"$ql_base_url\">" "${dir_static}/dist/index.html"; then
-      awk -v text="<base href=\"$ql_base_url\">" '/<link/ && !inserted {print text; inserted=1} 1' "${dir_static}/dist/index.html" >temp.html
-      mv temp.html "${dir_static}/dist/index.html"
-    fi
-  else
-    rootStr="root ${dir_static}/dist;"
-  fi
-  sed -i "s,QL_ALIAS_CONFIG,${aliasStr},g" /etc/nginx/conf.d/front.conf
-  sed -i "s,QL_ROOT_CONFIG,${rootStr},g" /etc/nginx/conf.d/front.conf
-  sed -i "s,QL_BASE_URL_LOCATION,${location_url},g" /etc/nginx/conf.d/front.conf
-  sed -i "s,QL_BASE_URL,${ql_base_url},g" /etc/nginx/conf.d/front.conf
-
-  local ipv6=$(ip a | grep inet6)
-  local ipv6Str=""
-  if [[ $ipv6 ]]; then
-    ipv6Str="listen [::]:${ql_port} ipv6only=on;"
-  fi
-
-  local ipv4Str="listen ${ql_port};"
-  sed -i "s,IPV6_CONFIG,${ipv6Str},g" /etc/nginx/conf.d/front.conf
-  sed -i "s,IPV4_CONFIG,${ipv4Str},g" /etc/nginx/conf.d/front.conf
-}
-
 get_env_array() {
   exported_variables=()
   while IFS= read -r line; do
@@ -444,8 +363,14 @@ clear_env() {
 }
 
 handle_task_start() {
-  [[ $ID ]] && update_cron "\"$ID\"" "0" "$$" "$log_path" "$begin_timestamp"
-  echo -e "## 开始执行... $begin_time\n"
+  local error_message=""
+  if [[ $ID ]]; then
+    local error=$(update_cron "\"$ID\"" "0" "$$" "$log_path" "$begin_timestamp")
+    if [[ $error ]]; then
+      error_message=", 任务状态更新失败(${error})"
+    fi
+  fi
+  echo -e "## 开始执行... ${begin_time}${error_message}\n"
 }
 
 run_task_before() {
@@ -473,11 +398,18 @@ handle_task_end() {
   local end_time=$(format_time "$time_format" "$etime")
   local end_timestamp=$(format_timestamp "$time_format" "$etime")
   local diff_time=$(($end_timestamp - $begin_timestamp))
+  local suffix=""
+  [[ "${MANUAL:=}" == "true" ]] && suffix="(手动停止)"
 
   [[ "$diff_time" == 0 ]] && diff_time=1
 
-  echo -e "\n## 执行结束... $end_time  耗时 $diff_time 秒　　　　　"
-  [[ $ID ]] && update_cron "\"$ID\"" "1" "" "$log_path" "$begin_timestamp" "$diff_time"
+  if [[ $ID ]]; then
+    local error=$(update_cron "\"$ID\"" "1" "$$" "$log_path" "$begin_timestamp" "$diff_time")
+    if [[ $error ]]; then
+      error_message=", 任务状态更新失败(${error})"
+    fi
+  fi
+  echo -e "\n## 执行结束$suffix... $end_time  耗时 $diff_time 秒${error_message:=}　　　　　"
 }
 
 init_env

@@ -1,6 +1,41 @@
 const querystring = require('node:querystring');
-const got = require('got');
+const { request: undiciRequest, ProxyAgent, FormData } = require('undici');
 const timeout = 15000;
+
+async function request(url, options = {}) {
+  const { json, form, body, headers = {}, ...rest } = options;
+
+  const finalHeaders = { ...headers };
+  let finalBody = body;
+
+  if (json) {
+    finalHeaders['content-type'] = 'application/json';
+    finalBody = JSON.stringify(json);
+  } else if (form) {
+    finalBody = form;
+    delete finalHeaders['content-type'];
+  }
+
+  return undiciRequest(url, {
+    headers: finalHeaders,
+    body: finalBody,
+    ...rest,
+  });
+}
+
+function post(url, options = {}) {
+  return request(url, { ...options, method: 'POST' });
+}
+
+function get(url, options = {}) {
+  return request(url, { ...options, method: 'GET' });
+}
+
+const httpClient = {
+  request,
+  post,
+  get,
+};
 
 const push_config = {
   HITOKOTO: true, // 启用一言（随机句子）
@@ -17,6 +52,7 @@ const push_config = {
   DD_BOT_TOKEN: '', // 钉钉机器人的 DD_BOT_TOKEN
 
   FSKEY: '', // 飞书机器人的 FSKEY
+  FSSECRET: '', // 飞书机器人的 FSSECRET，对应安全设置里的签名校验密钥
 
   // 推送到个人QQ：http://127.0.0.1/send_private_msg
   // 群：http://127.0.0.1/send_group_msg
@@ -40,9 +76,14 @@ const push_config = {
   CHAT_URL: '', // synology chat url
   CHAT_TOKEN: '', // synology chat token
 
-  // 官方文档：http://www.pushplus.plus/
-  PUSH_PLUS_TOKEN: '', // push+ 微信推送的用户令牌
-  PUSH_PLUS_USER: '', // push+ 微信推送的群组编码
+  // 官方文档：https://www.pushplus.plus/
+  PUSH_PLUS_TOKEN: '', // pushplus 推送的用户令牌
+  PUSH_PLUS_USER: '', // pushplus 推送的群组编码
+  PUSH_PLUS_TEMPLATE: 'html', // pushplus 发送模板，支持html,txt,json,markdown,cloudMonitor,jenkins,route,pay
+  PUSH_PLUS_CHANNEL: 'wechat', // pushplus 发送渠道，支持wechat,webhook,cp,mail,sms
+  PUSH_PLUS_WEBHOOK: '', // pushplus webhook编码，可在pushplus公众号上扩展配置出更多渠道
+  PUSH_PLUS_CALLBACKURL: '', // pushplus 发送结果回调地址，会把推送最终结果通知到这个地址上
+  PUSH_PLUS_TO: '', // pushplus 好友令牌，微信公众号渠道填写好友令牌，企业微信渠道填写企业微信用户id
 
   // 微加机器人，官方网站：https://www.weplusbot.com/
   WE_PLUS_BOT_TOKEN: '', // 微加机器人的用户令牌
@@ -79,7 +120,8 @@ const push_config = {
   AIBOTK_NAME: '', // 智能微秘书  发送群名 或者好友昵称和type要对应好
 
   SMTP_SERVICE: '', // 邮箱服务名称，比如 126、163、Gmail、QQ 等，支持列表 https://github.com/nodemailer/nodemailer/blob/master/lib/well-known/services.json
-  SMTP_EMAIL: '', // SMTP 收发件邮箱，通知将会由自己发给自己
+  SMTP_EMAIL: '', // SMTP 发件邮箱
+  SMTP_TO: '', // SMTP 收件邮箱，默认通知将会发给发件邮箱
   SMTP_PASSWORD: '', // SMTP 登录密码，也可能为特殊口令，视具体邮件服务商说明而定
   SMTP_NAME: '', // SMTP 收发件人姓名，可随意填写
 
@@ -99,6 +141,16 @@ const push_config = {
   NTFY_URL: '', // ntfy地址,如https://ntfy.sh,默认为https://ntfy.sh
   NTFY_TOPIC: '', // ntfy的消息应用topic
   NTFY_PRIORITY: '3', // 推送消息优先级,默认为3
+  NTFY_TOKEN: '', // 推送token,可选
+  NTFY_USERNAME: '', // 推送用户名称,可选
+  NTFY_PASSWORD: '', // 推送用户密码,可选
+  NTFY_ACTIONS: '', // 推送用户动作,可选
+
+  // 官方文档: https://wxpusher.zjiecode.com/docs/
+  // 管理后台: https://wxpusher.zjiecode.com/admin/
+  WXPUSHER_APP_TOKEN: '', // wxpusher 的 appToken
+  WXPUSHER_TOPIC_IDS: '', // wxpusher 的 主题ID，多个用英文分号;分隔 topic_ids 与 uids 至少配置一个才行
+  WXPUSHER_UIDS: '', // wxpusher 的 用户ID，多个用英文分号;分隔 topic_ids 与 uids 至少配置一个才行
 };
 
 for (const key in push_config) {
@@ -111,9 +163,9 @@ for (const key in push_config) {
 const $ = {
   post: (params, callback) => {
     const { url, ...others } = params;
-    got.post(url, others).then(
-      (res) => {
-        let body = res.body;
+    httpClient.post(url, others).then(
+      async (res) => {
+        let body = await res.body.text();
         try {
           body = JSON.parse(body);
         } catch (error) {}
@@ -126,9 +178,9 @@ const $ = {
   },
   get: (params, callback) => {
     const { url, ...others } = params;
-    got.get(url, others).then(
-      (res) => {
-        let body = res.body;
+    httpClient.get(url, others).then(
+      async (res) => {
+        let body = await res.body.text();
         try {
           body = JSON.parse(body);
         } catch (error) {}
@@ -144,8 +196,8 @@ const $ = {
 
 async function one() {
   const url = 'https://v1.hitokoto.cn/';
-  const res = await got.get(url);
-  const body = JSON.parse(res.body);
+  const res = await httpClient.request(url);
+  const body = await res.body.json();
   return `${body.hitokoto}    ----${body.from}`;
 }
 
@@ -231,10 +283,13 @@ function serverNotify(text, desp) {
 
       const matchResult = PUSH_KEY.match(/^sctp(\d+)t/i);
       const options = {
-        url: matchResult && matchResult[1]
-        ? `https://${matchResult[1]}.push.ft07.com/send/${PUSH_KEY}.send`
-        : `https://sctapi.ftqq.com/${PUSH_KEY}.send`,
-        body: `text=${encodeURIComponent(text)}&desp=${encodeURIComponent(desp)}`,
+        url:
+          matchResult && matchResult[1]
+            ? `https://${matchResult[1]}.push.ft07.com/send/${PUSH_KEY}.send`
+            : `https://sctapi.ftqq.com/${PUSH_KEY}.send`,
+        body: `text=${encodeURIComponent(text)}&desp=${encodeURIComponent(
+          desp,
+        )}`,
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
@@ -414,7 +469,7 @@ function tgBotNotify(text, desp) {
       TG_PROXY_AUTH,
     } = push_config;
     if (TG_BOT_TOKEN && TG_USER_ID) {
-      const options = {
+      let options = {
         url: `${TG_API_HOST}/bot${TG_BOT_TOKEN}/sendMessage`,
         json: {
           chat_id: `${TG_USER_ID}`,
@@ -427,21 +482,11 @@ function tgBotNotify(text, desp) {
         timeout,
       };
       if (TG_PROXY_HOST && TG_PROXY_PORT) {
-        const { HttpProxyAgent, HttpsProxyAgent } = require('hpagent');
-        const options = {
-          keepAlive: true,
-          keepAliveMsecs: 1000,
-          maxSockets: 256,
-          maxFreeSockets: 256,
-          proxy: `http://${TG_PROXY_AUTH}${TG_PROXY_HOST}:${TG_PROXY_PORT}`,
-        };
-        const httpAgent = new HttpProxyAgent(options);
-        const httpsAgent = new HttpsProxyAgent(options);
-        const agent = {
-          http: httpAgent,
-          https: httpsAgent,
-        };
-        Object.assign(options, { agent });
+        let agent;
+        agent = new ProxyAgent({
+          uri: `http://${TG_PROXY_AUTH}${TG_PROXY_HOST}:${TG_PROXY_PORT}`,
+        });
+        options.dispatcher = agent;
       }
       $.post(options, (err, resp, data) => {
         try {
@@ -765,7 +810,15 @@ function iGotNotify(text, desp, params = {}) {
 
 function pushPlusNotify(text, desp) {
   return new Promise((resolve) => {
-    const { PUSH_PLUS_TOKEN, PUSH_PLUS_USER } = push_config;
+    const {
+      PUSH_PLUS_TOKEN,
+      PUSH_PLUS_USER,
+      PUSH_PLUS_TEMPLATE,
+      PUSH_PLUS_CHANNEL,
+      PUSH_PLUS_WEBHOOK,
+      PUSH_PLUS_CALLBACKURL,
+      PUSH_PLUS_TO,
+    } = push_config;
     if (PUSH_PLUS_TOKEN) {
       desp = desp.replace(/[\n\r]/g, '<br>'); // 默认为html, 不支持plaintext
       const body = {
@@ -773,6 +826,11 @@ function pushPlusNotify(text, desp) {
         title: `${text}`,
         content: `${desp}`,
         topic: `${PUSH_PLUS_USER}`,
+        template: `${PUSH_PLUS_TEMPLATE}`,
+        channel: `${PUSH_PLUS_CHANNEL}`,
+        webhook: `${PUSH_PLUS_WEBHOOK}`,
+        callbackUrl: `${PUSH_PLUS_CALLBACKURL}`,
+        to: `${PUSH_PLUS_TO}`,
       };
       const options = {
         url: `https://www.pushplus.plus/send`,
@@ -786,7 +844,7 @@ function pushPlusNotify(text, desp) {
         try {
           if (err) {
             console.log(
-              `Push+ 发送${
+              `pushplus 发送${
                 PUSH_PLUS_USER ? '一对多' : '一对一'
               }通知消息失败😞\n`,
               err,
@@ -794,13 +852,15 @@ function pushPlusNotify(text, desp) {
           } else {
             if (data.code === 200) {
               console.log(
-                `Push+ 发送${
+                `pushplus 发送${
                   PUSH_PLUS_USER ? '一对多' : '一对一'
-                }通知消息完成🎉\n`,
+                }通知请求成功🎉，可根据流水号查询推送结果：${
+                  data.data
+                }\n注意：请求成功并不代表推送成功，如未收到消息，请到pushplus官网使用流水号查询推送最终结果`,
               );
             } else {
               console.log(
-                `Push+ 发送${
+                `pushplus 发送${
                   PUSH_PLUS_USER ? '一对多' : '一对一'
                 }通知消息异常 ${data.msg}\n`,
               );
@@ -930,11 +990,26 @@ function aibotkNotify(text, desp) {
 
 function fsBotNotify(text, desp) {
   return new Promise((resolve) => {
-    const { FSKEY } = push_config;
+    const { FSKEY, FSSECRET } = push_config;
     if (FSKEY) {
+      const body = { msg_type: 'text', content: { text: `${text}\n\n${desp}` } };
+
+      // Add signature if secret is provided
+      // Note: Feishu's signature algorithm uses timestamp+"\n"+secret as the HMAC key
+      // and signs an empty message, which differs from typical HMAC usage
+      if (FSSECRET) {
+        const crypto = require('crypto');
+        const timestamp = Math.floor(Date.now() / 1000).toString();
+        const stringToSign = `${timestamp}\n${FSSECRET}`;
+        const hmac = crypto.createHmac('sha256', stringToSign);
+        const sign = hmac.digest('base64');
+        body.timestamp = timestamp;
+        body.sign = sign;
+      }
+
       const options = {
         url: `https://open.feishu.cn/open-apis/bot/v2/hook/${FSKEY}`,
-        json: { msg_type: 'text', content: { text: `${text}\n\n${desp}` } },
+        json: body,
         headers: {
           'Content-Type': 'application/json',
         },
@@ -964,7 +1039,8 @@ function fsBotNotify(text, desp) {
 }
 
 async function smtpNotify(text, desp) {
-  const { SMTP_EMAIL, SMTP_PASSWORD, SMTP_SERVICE, SMTP_NAME } = push_config;
+  const { SMTP_EMAIL, SMTP_TO, SMTP_PASSWORD, SMTP_SERVICE, SMTP_NAME } =
+    push_config;
   if (![SMTP_EMAIL, SMTP_PASSWORD].every(Boolean) || !SMTP_SERVICE) {
     return;
   }
@@ -982,7 +1058,7 @@ async function smtpNotify(text, desp) {
     const addr = SMTP_NAME ? `"${SMTP_NAME}" <${SMTP_EMAIL}>` : SMTP_EMAIL;
     const info = await transporter.sendMail({
       from: addr,
-      to: addr,
+      to: SMTP_TO ? SMTP_TO.split(';') : addr,
       subject: text,
       html: `${desp.replace(/\n/g, '<br/>')}`,
     });
@@ -1178,17 +1254,18 @@ function webhookNotify(text, desp) {
       '$title',
       encodeURIComponent(text),
     ).replaceAll('$content', encodeURIComponent(desp));
-    got(formatUrl, options).then((resp) => {
+    httpClient.request(formatUrl, options).then(async (resp) => {
+      const body = await resp.body.text();
       try {
         if (resp.statusCode !== 200) {
-          console.log(`自定义发送通知消息失败😞 ${resp.body}\n`);
+          console.log(`自定义发送通知消息失败😞 ${body}\n`);
         } else {
-          console.log(`自定义发送通知消息成功🎉 ${resp.body}\n`);
+          console.log(`自定义发送通知消息成功🎉 ${body}\n`);
         }
       } catch (e) {
         $.logErr(e, resp);
       } finally {
-        resolve(resp.body);
+        resolve(body);
       }
     });
   });
@@ -1201,17 +1278,27 @@ function ntfyNotify(text, desp) {
   }
 
   return new Promise((resolve) => {
-    const { NTFY_URL, NTFY_TOPIC, NTFY_PRIORITY } = push_config;
+    const { NTFY_URL, NTFY_TOPIC, NTFY_PRIORITY, NTFY_TOKEN, NTFY_USERNAME, NTFY_PASSWORD, NTFY_ACTIONS } = push_config;
     if (NTFY_TOPIC) {
       const options = {
         url: `${NTFY_URL || 'https://ntfy.sh'}/${NTFY_TOPIC}`,
-        body: `${desp}`, 
+        body: `${desp}`,
         headers: {
-          'Title': `${encodeRFC2047(text)}`,
-          'Priority': NTFY_PRIORITY || '3'
+          Title: `${encodeRFC2047(text)}`,
+          Priority: NTFY_PRIORITY || '3',
+          Icon: 'https://qn.whyour.cn/logo.png',
         },
         timeout,
       };
+      if (NTFY_TOKEN) {
+        options.headers['Authorization'] = `Bearer ${NTFY_TOKEN}`;
+      } else if (NTFY_USERNAME && NTFY_PASSWORD) {
+        options.headers['Authorization'] = `Basic ${Buffer.from(`${NTFY_USERNAME}:${NTFY_PASSWORD}`).toString('base64')}`;
+      }
+      if (NTFY_ACTIONS) {
+        options.headers['Actions'] = encodeRFC2047(NTFY_ACTIONS);
+      }
+
       $.post(options, (err, resp, data) => {
         try {
           if (err) {
@@ -1235,6 +1322,75 @@ function ntfyNotify(text, desp) {
   });
 }
 
+function wxPusherNotify(text, desp) {
+  return new Promise((resolve) => {
+    const { WXPUSHER_APP_TOKEN, WXPUSHER_TOPIC_IDS, WXPUSHER_UIDS } =
+      push_config;
+    if (WXPUSHER_APP_TOKEN) {
+      // 处理topic_ids，将分号分隔的字符串转为数组
+      const topicIds = WXPUSHER_TOPIC_IDS
+        ? WXPUSHER_TOPIC_IDS.split(';')
+            .map((id) => id.trim())
+            .filter((id) => id)
+            .map((id) => parseInt(id))
+        : [];
+
+      // 处理uids，将分号分隔的字符串转为数组
+      const uids = WXPUSHER_UIDS
+        ? WXPUSHER_UIDS.split(';')
+            .map((uid) => uid.trim())
+            .filter((uid) => uid)
+        : [];
+
+      // topic_ids uids 至少有一个
+      if (!topicIds.length && !uids.length) {
+        console.log(
+          'wxpusher 服务的 WXPUSHER_TOPIC_IDS 和 WXPUSHER_UIDS 至少设置一个!!',
+        );
+        return resolve();
+      }
+
+      const body = {
+        appToken: WXPUSHER_APP_TOKEN,
+        content: `<h1>${text}</h1><br/><div style='white-space: pre-wrap;'>${desp}</div>`,
+        summary: text,
+        contentType: 2,
+        topicIds: topicIds,
+        uids: uids,
+        verifyPayType: 0,
+      };
+
+      const options = {
+        url: 'https://wxpusher.zjiecode.com/api/send/message',
+        body: JSON.stringify(body),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        timeout,
+      };
+
+      $.post(options, (err, resp, data) => {
+        try {
+          if (err) {
+            console.log('wxpusher发送通知消息失败！\n', err);
+          } else {
+            if (data.code === 1000) {
+              console.log('wxpusher发送通知消息完成！');
+            } else {
+              console.log(`wxpusher发送通知消息异常：${data.msg}`);
+            }
+          }
+        } catch (e) {
+          $.logErr(e, resp);
+        } finally {
+          resolve(data);
+        }
+      });
+    } else {
+      resolve();
+    }
+  });
+}
 
 function parseString(input, valueFormatFn) {
   const regex = /(\w+):\s*((?:(?!\n\w+:).)*)/g;
@@ -1365,6 +1521,7 @@ async function sendNotify(text, desp, params = {}) {
     webhookNotify(text, desp), // 自定义通知
     qmsgNotify(text, desp), // 自定义通知
     ntfyNotify(text, desp), // Ntfy
+    wxPusherNotify(text, desp), // wxpusher
   ]);
 }
 

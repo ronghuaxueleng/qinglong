@@ -1,14 +1,11 @@
 import crypto from 'crypto';
-import got from 'got';
-import { HttpProxyAgent, HttpsProxyAgent } from 'hpagent';
 import nodemailer from 'nodemailer';
 import { Inject, Service } from 'typedi';
-import winston from 'winston';
-import { parseBody, parseHeaders, safeJSONParse } from '../config/util';
+import { parseBody, parseHeaders } from '../config/util';
 import { NotificationInfo } from '../data/notify';
 import UserService from './user';
-import { readFile } from 'fs/promises';
-import config from '../config';
+import { httpClient } from '../config/http';
+import { ProxyAgent } from 'undici';
 
 @Service()
 export default class NotificationService {
@@ -36,6 +33,7 @@ export default class NotificationService {
     ['lark', this.lark],
     ['chronocat', this.chronocat],
     ['ntfy', this.ntfy],
+    ['wxPusherBot', this.wxPusherBot],
   ]);
 
   private title = '';
@@ -48,41 +46,29 @@ export default class NotificationService {
 
   constructor() {}
 
-  public async externalNotify(
-    title: string,
-    content: string,
-  ): Promise<boolean | undefined> {
-    const { type, ...rest } = safeJSONParse(
-      await readFile(config.systemNotifyFile, 'utf-8'),
-    );
-    if (type) {
-      this.title = title;
-      this.content = content;
-      this.params = rest;
-      const notificationModeAction = this.modeMap.get(type);
-      try {
-        return await notificationModeAction?.call(this);
-      } catch (error: any) {
-        throw error;
-      }
-    }
-    return false;
-  }
-
   public async notify(
     title: string,
     content: string,
+    notificationInfo?: NotificationInfo,
   ): Promise<boolean | undefined> {
-    const { type, ...rest } = await this.userService.getNotificationMode();
+    let { type, ...rest } = await this.userService.getNotificationMode();
+    if (notificationInfo?.type) {
+      type = notificationInfo?.type;
+    }
     if (type) {
       this.title = title;
       this.content = content;
-      this.params = rest;
+      let params = rest;
+      if (notificationInfo) {
+        const { type: _, ...others } = notificationInfo;
+        params = { ...rest, ...others };
+      }
+      this.params = params;
       const notificationModeAction = this.modeMap.get(type);
       try {
         return await notificationModeAction?.call(this);
       } catch (error: any) {
-        throw error;
+        console.error(error);
       }
     }
     return false;
@@ -107,8 +93,9 @@ export default class NotificationService {
   private async gotify() {
     const { gotifyUrl, gotifyToken, gotifyPriority = 1 } = this.params;
     try {
-      const res: any = await got
-        .post(`${gotifyUrl}/message?token=${gotifyToken}`, {
+      const res = await httpClient.post(
+        `${gotifyUrl}/message?token=${gotifyToken}`,
+        {
           ...this.gotOption,
           body: `title=${encodeURIComponent(
             this.title,
@@ -118,8 +105,8 @@ export default class NotificationService {
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
           },
-        })
-        .json();
+        },
+      );
       if (typeof res.id === 'number') {
         return true;
       } else {
@@ -133,13 +120,11 @@ export default class NotificationService {
   private async goCqHttpBot() {
     const { goCqHttpBotQq, goCqHttpBotToken, goCqHttpBotUrl } = this.params;
     try {
-      const res: any = await got
-        .post(`${goCqHttpBotUrl}?${goCqHttpBotQq}`, {
-          ...this.gotOption,
-          json: { message: `${this.title}\n${this.content}` },
-          headers: { Authorization: 'Bearer ' + goCqHttpBotToken },
-        })
-        .json();
+      const res = await httpClient.post(`${goCqHttpBotUrl}?${goCqHttpBotQq}`, {
+        ...this.gotOption,
+        json: { message: `${this.title}\n${this.content}` },
+        headers: { Authorization: 'Bearer ' + goCqHttpBotToken },
+      });
       if (res.retcode === 0) {
         return true;
       } else {
@@ -153,18 +138,19 @@ export default class NotificationService {
   private async serverChan() {
     const { serverChanKey } = this.params;
     const matchResult = serverChanKey.match(/^sctp(\d+)t/i);
-    const url = matchResult && matchResult[1]
-      ? `https://${matchResult[1]}.push.ft07.com/send/${serverChanKey}.send`
-      : `https://sctapi.ftqq.com/${serverChanKey}.send`;
+    const url =
+      matchResult && matchResult[1]
+        ? `https://${matchResult[1]}.push.ft07.com/send/${serverChanKey}.send`
+        : `https://sctapi.ftqq.com/${serverChanKey}.send`;
 
     try {
-      const res: any = await got
-        .post(url, {
-          ...this.gotOption,
-          body: `title=${encodeURIComponent(this.title)}&desp=${encodeURIComponent(this.content)}`,
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        })
-        .json();
+      const res = await httpClient.post(url, {
+        ...this.gotOption,
+        body: `title=${encodeURIComponent(
+          this.title,
+        )}&desp=${encodeURIComponent(this.content)}`,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
       if (res.errno === 0 || res.data.errno === 0) {
         return true;
       } else {
@@ -179,15 +165,13 @@ export default class NotificationService {
     const { pushDeerKey, pushDeerUrl } = this.params;
     const url = pushDeerUrl || `https://api2.pushdeer.com/message/push`;
     try {
-      const res: any = await got
-        .post(url, {
-          ...this.gotOption,
-          body: `pushkey=${pushDeerKey}&text=${encodeURIComponent(
-            this.title,
-          )}&desp=${encodeURIComponent(this.content)}&type=markdown`,
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        })
-        .json();
+      const res = await httpClient.post(url, {
+        ...this.gotOption,
+        body: `pushkey=${pushDeerKey}&text=${encodeURIComponent(
+          this.title,
+        )}&desp=${encodeURIComponent(this.content)}&type=markdown`,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
       if (
         res.content.result.length !== undefined &&
         res.content.result.length > 0
@@ -202,16 +186,13 @@ export default class NotificationService {
   }
 
   private async chat() {
-    const { chatUrl, chatToken } = this.params;
-    const url = `${chatUrl}${chatToken}`;
+    const { synologyChatUrl } = this.params;
     try {
-      const res: any = await got
-        .post(url, {
-          ...this.gotOption,
-          body: `payload={"text":"${this.title}\n${this.content}"}`,
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        })
-        .json();
+      const res = await httpClient.post(synologyChatUrl, {
+        ...this.gotOption,
+        body: `payload={"text":"${this.title}\n${this.content}"}`,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
       if (res.success) {
         return true;
       } else {
@@ -247,13 +228,11 @@ export default class NotificationService {
       url: barkUrl,
     };
     try {
-      const res: any = await got
-        .post(url, {
-          ...this.gotOption,
-          json: body,
-          headers: { 'Content-Type': 'application/json' },
-        })
-        .json();
+      const res = await httpClient.post(url, {
+        ...this.gotOption,
+        json: body,
+        headers: { 'Content-Type': 'application/json' },
+      });
       if (res.code === 200) {
         return true;
       } else {
@@ -279,29 +258,17 @@ export default class NotificationService {
     }/bot${telegramBotToken}/sendMessage`;
     let agent;
     if (telegramBotProxyHost && telegramBotProxyPort) {
-      const options: any = {
-        keepAlive: true,
-        keepAliveMsecs: 1000,
-        maxSockets: 256,
-        maxFreeSockets: 256,
-        proxy: `http://${authStr}${telegramBotProxyHost}:${telegramBotProxyPort}`,
-      };
-      const httpAgent = new HttpProxyAgent(options);
-      const httpsAgent = new HttpsProxyAgent(options);
-      agent = {
-        http: httpAgent,
-        https: httpsAgent,
-      };
+      agent = new ProxyAgent({
+        uri: `http://${authStr}${telegramBotProxyHost}:${telegramBotProxyPort}`,
+      });
     }
     try {
-      const res: any = await got
-        .post(url, {
-          ...this.gotOption,
-          body: `chat_id=${telegramBotUserId}&text=${this.title}\n\n${this.content}&disable_web_page_preview=true`,
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          agent,
-        })
-        .json();
+      const res = await httpClient.post(url, {
+        ...this.gotOption,
+        body: `chat_id=${telegramBotUserId}&text=${this.title}\n\n${this.content}&disable_web_page_preview=true`,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        dispatcher: agent,
+      });
       if (res.ok) {
         return true;
       } else {
@@ -324,17 +291,15 @@ export default class NotificationService {
     }
     const url = `https://oapi.dingtalk.com/robot/send?access_token=${dingtalkBotToken}${secretParam}`;
     try {
-      const res: any = await got
-        .post(url, {
-          ...this.gotOption,
-          json: {
-            msgtype: 'text',
-            text: {
-              content: ` ${this.title}\n\n${this.content}`,
-            },
+      const res = await httpClient.post(url, {
+        ...this.gotOption,
+        json: {
+          msgtype: 'text',
+          text: {
+            content: ` ${this.title}\n\n${this.content}`,
           },
-        })
-        .json();
+        },
+      });
       if (res.errcode === 0) {
         return true;
       } else {
@@ -350,17 +315,15 @@ export default class NotificationService {
       this.params;
     const url = `${weWorkOrigin}/cgi-bin/webhook/send?key=${weWorkBotKey}`;
     try {
-      const res: any = await got
-        .post(url, {
-          ...this.gotOption,
-          json: {
-            msgtype: 'text',
-            text: {
-              content: ` ${this.title}\n\n${this.content}`,
-            },
+      const res = await httpClient.post(url, {
+        ...this.gotOption,
+        json: {
+          msgtype: 'text',
+          text: {
+            content: ` ${this.title}\n\n${this.content}`,
           },
-        })
-        .json();
+        },
+      });
       if (res.errcode === 0) {
         return true;
       } else {
@@ -377,15 +340,13 @@ export default class NotificationService {
     const [corpid, corpsecret, touser, agentid, thumb_media_id = '1'] =
       weWorkAppKey.split(',');
     const url = `${weWorkOrigin}/cgi-bin/gettoken`;
-    const tokenRes: any = await got
-      .post(url, {
-        ...this.gotOption,
-        json: {
-          corpid,
-          corpsecret,
-        },
-      })
-      .json();
+    const tokenRes = await httpClient.post(url, {
+      ...this.gotOption,
+      json: {
+        corpid,
+        corpsecret,
+      },
+    });
 
     let options: any = {
       msgtype: 'mpnews',
@@ -426,20 +387,18 @@ export default class NotificationService {
     }
 
     try {
-      const res: any = await got
-        .post(
-          `${weWorkOrigin}/cgi-bin/message/send?access_token=${tokenRes.access_token}`,
-          {
-            ...this.gotOption,
-            json: {
-              touser,
-              agentid,
-              safe: '0',
-              ...options,
-            },
+      const res = await httpClient.post(
+        `${weWorkOrigin}/cgi-bin/message/send?access_token=${tokenRes.access_token}`,
+        {
+          ...this.gotOption,
+          json: {
+            touser,
+            agentid,
+            safe: '0',
+            ...options,
           },
-        )
-        .json();
+        },
+      );
 
       if (res.errcode === 0) {
         return true;
@@ -481,14 +440,12 @@ export default class NotificationService {
     }
 
     try {
-      const res: any = await got
-        .post(url, {
-          ...this.gotOption,
-          json: {
-            ...json,
-          },
-        })
-        .json();
+      const res = await httpClient.post(url, {
+        ...this.gotOption,
+        json: {
+          ...json,
+        },
+      });
       if (res.code === 0) {
         return true;
       } else {
@@ -503,13 +460,11 @@ export default class NotificationService {
     const { iGotPushKey } = this.params;
     const url = `https://push.hellyw.com/${iGotPushKey.toLowerCase()}`;
     try {
-      const res: any = await got
-        .post(url, {
-          ...this.gotOption,
-          body: `title=${this.title}&content=${this.content}`,
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        })
-        .json();
+      const res = await httpClient.post(url, {
+        ...this.gotOption,
+        body: `title=${this.title}&content=${this.content}`,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
 
       if (res.ret === 0) {
         return true;
@@ -519,23 +474,36 @@ export default class NotificationService {
     } catch (error: any) {
       throw new Error(error.response ? error.response.body : error);
     }
- }
+  }
 
   private async pushPlus() {
-    const { pushPlusToken, pushPlusUser } = this.params;
+    const {
+      pushPlusToken,
+      pushPlusUser,
+      pushplusWebhook,
+      pushPlusTemplate,
+      pushplusChannel,
+      pushplusCallbackUrl,
+      pushplusTo,
+    } = this.params;
     const url = `https://www.pushplus.plus/send`;
     try {
-      const res: any = await got
-        .post(url, {
-          ...this.gotOption,
-          json: {
-            token: `${pushPlusToken}`,
-            title: `${this.title}`,
-            content: `${this.content.replace(/[\n\r]/g, '<br>')}`,
-            topic: `${pushPlusUser || ''}`,
-          },
-        })
-        .json();
+      let body = {
+        ...this.gotOption,
+        json: {
+          token: `${pushPlusToken}`,
+          title: `${this.title}`,
+          content: `${this.content.replace(/[\n\r]/g, '<br>')}`,
+          topic: `${pushPlusUser || ''}`,
+          template: `${pushPlusTemplate || 'html'}`,
+          channel: `${pushplusChannel || 'wechat'}`,
+          webhook: `${pushplusWebhook || ''}`,
+          callbackUrl: `${pushplusCallbackUrl || ''}`,
+          to: `${pushplusTo || ''}`,
+        },
+      };
+
+      const res = await httpClient.post(url, body);
 
       if (res.code === 200) {
         return true;
@@ -559,19 +527,17 @@ export default class NotificationService {
 
     const url = `https://www.weplusbot.com/send`;
     try {
-      const res: any = await got
-        .post(url, {
-          ...this.gotOption,
-          json: {
-            token: `${wePlusBotToken}`,
-            title: `${this.title}`,
-            template: `${template}`,
-            content: `${content}`,
-            receiver: `${wePlusBotReceiver || ''}`,
-            version: `${wePlusBotVersion || 'pro'}`,
-          },
-        })
-        .json();
+      const res = await httpClient.post(url, {
+        ...this.gotOption,
+        json: {
+          token: `${wePlusBotToken}`,
+          title: `${this.title}`,
+          template: `${template}`,
+          content: `${content}`,
+          receiver: `${wePlusBotReceiver || ''}`,
+          version: `${wePlusBotVersion || 'pro'}`,
+        },
+      });
 
       if (res.code === 200) {
         return true;
@@ -584,23 +550,35 @@ export default class NotificationService {
   }
 
   private async lark() {
-    let { larkKey } = this.params;
+    let { larkKey, larkSecret } = this.params;
 
     if (!larkKey.startsWith('http')) {
       larkKey = `https://open.feishu.cn/open-apis/bot/v2/hook/${larkKey}`;
     }
 
+    const body: Record<string, any> = {
+      msg_type: 'text',
+      content: { text: `${this.title}\n\n${this.content}` },
+    };
+
+    // Add signature if secret is provided
+    // Note: Feishu's signature algorithm uses timestamp+"\n"+secret as the HMAC key
+    // and signs an empty message, which differs from typical HMAC usage
+    if (larkSecret) {
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const stringToSign = `${timestamp}\n${larkSecret}`;
+      const hmac = crypto.createHmac('sha256', stringToSign);
+      const sign = hmac.digest('base64');
+      body.timestamp = timestamp;
+      body.sign = sign;
+    }
+
     try {
-      const res: any = await got
-        .post(larkKey, {
-          ...this.gotOption,
-          json: {
-            msg_type: 'text',
-            content: { text: `${this.title}\n\n${this.content}` },
-          },
-          headers: { 'Content-Type': 'application/json' },
-        })
-        .json();
+      const res = await httpClient.post(larkKey, {
+        ...this.gotOption,
+        json: body,
+        headers: { 'Content-Type': 'application/json' },
+      });
       if (res.StatusCode === 0 || res.code === 0) {
         return true;
       } else {
@@ -612,7 +590,7 @@ export default class NotificationService {
   }
 
   private async email() {
-    const { emailPass, emailService, emailUser } = this.params;
+    const { emailPass, emailService, emailUser, emailTo } = this.params;
 
     try {
       const transporter = nodemailer.createTransport({
@@ -625,7 +603,7 @@ export default class NotificationService {
 
       const info = await transporter.sendMail({
         from: `"青龙快讯" <${emailUser}>`,
-        to: `${emailUser}`,
+        to: emailTo ? emailTo.split(';') : emailUser,
         subject: `${this.title}`,
         html: `${this.content.replace(/\n/g, '<br/>')}`,
       });
@@ -645,19 +623,22 @@ export default class NotificationService {
   private async pushMe() {
     const { pushMeKey, pushMeUrl } = this.params;
     try {
-      const res: any = await got.post(pushMeUrl || 'https://push.i-i.me/', {
-        ...this.gotOption,
-        json: {
-          push_key: pushMeKey,
-          title: this.title,
-          content: this.content,
+      const res = await httpClient.post<'text'>(
+        pushMeUrl || 'https://push.i-i.me/',
+        {
+          ...this.gotOption,
+          json: {
+            push_key: pushMeKey,
+            title: this.title,
+            content: this.content,
+          },
+          headers: { 'Content-Type': 'application/json' },
         },
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (res.body === 'success') {
+      );
+      if (res === 'success') {
         return true;
       } else {
-        throw new Error(res.body);
+        throw new Error(res);
       }
     } catch (error: any) {
       throw new Error(error.response ? error.response.body : error);
@@ -665,31 +646,105 @@ export default class NotificationService {
   }
 
   private async ntfy() {
-    const { ntfyUrl, ntfyTopic, ntfyPriority } = this.params;
+    const {
+      ntfyUrl,
+      ntfyTopic,
+      ntfyPriority,
+      ntfyToken,
+      ntfyUsername,
+      ntfyPassword,
+      ntfyActions,
+    } = this.params;
     // 编码函数
     const encodeRfc2047 = (text: string, charset: string = 'UTF-8'): string => {
       const encodedText = Buffer.from(text).toString('base64');
       return `=?${charset}?B?${encodedText}?=`;
-  };
+    };
     try {
-        const encodedTitle = encodeRfc2047(this.title);
-        const res: any = await got
-          .post(`${ntfyUrl || 'https://ntfy.sh'}/${ntfyTopic}`, {
-              ...this.gotOption,
-              body: `${this.content}`,
-              headers: { 'Title': encodedTitle, 'Priority': `${ntfyPriority || '3'}` },
-          });
-          if (res.statusCode === 200) {
-            return true;
-          } else {
-            throw new Error(JSON.stringify(res));
-          }
+      const headers: Record<string, string> = {
+        Title: encodeRfc2047(this.title),
+        Priority: `${ntfyPriority || '3'}`,
+        Icon: 'https://qn.whyour.cn/logo.png',
+      };
+      if (ntfyToken) {
+        headers['Authorization'] = `Bearer ${ntfyToken}`;
+      } else if (ntfyUsername && ntfyPassword) {
+        headers['Authorization'] = `Basic ${Buffer.from(
+          `${ntfyUsername}:${ntfyPassword}`,
+        ).toString('base64')}`;
+      }
+      if (ntfyActions) {
+        headers['Actions'] = encodeRfc2047(ntfyActions);
+      }
+      const res = await httpClient.request(
+        `${ntfyUrl || 'https://ntfy.sh'}/${ntfyTopic}`,
+        {
+          ...this.gotOption,
+          body: `${this.content}`,
+          headers: headers,
+          method: 'POST',
+        },
+      );
+      if (res.statusCode === 200) {
+        return true;
+      } else {
+        throw new Error(await res.body.text());
+      }
     } catch (error: any) {
-        throw new Error(error.response ? error.response.body : error);
+      throw new Error(error.response ? error.response.body : error);
     }
   }
 
-  
+  private async wxPusherBot() {
+    const { wxPusherBotAppToken, wxPusherBotTopicIds, wxPusherBotUids } =
+      this.params;
+    // 处理 topicIds，将分号分隔的字符串转为数组
+    const topicIds = wxPusherBotTopicIds
+      ? wxPusherBotTopicIds
+          .split(';')
+          .map((id) => id.trim())
+          .filter((id) => id)
+          .map((id) => parseInt(id))
+      : [];
+
+    // 处理 uids，将分号分隔的字符串转为数组
+    const uids = wxPusherBotUids
+      ? wxPusherBotUids
+          .split(';')
+          .map((uid) => uid.trim())
+          .filter((uid) => uid)
+      : [];
+
+    // topic_ids 和 uids 至少要有一个
+    if (!topicIds.length && !uids.length) {
+      throw new Error('wxPusher 服务的 TopicIds 和 Uids 至少配置一个才行');
+    }
+
+    const url = `https://wxpusher.zjiecode.com/api/send/message`;
+    try {
+      const res = await httpClient.post(url, {
+        ...this.gotOption,
+        json: {
+          appToken: wxPusherBotAppToken,
+          content: `<h1>${this.title}</h1><br/><div style='white-space: pre-wrap;'>${this.content}</div>`,
+          summary: this.title,
+          contentType: 2,
+          topicIds: topicIds,
+          uids: uids,
+          verifyPayType: 0,
+        },
+      });
+
+      if (res.code === 1000) {
+        return true;
+      } else {
+        throw new Error(JSON.stringify(res));
+      }
+    } catch (error: any) {
+      throw new Error(error.response ? error.response.body : error);
+    }
+  }
+
   private async chronocat() {
     const { chronocatURL, chronocatQQ, chronocatToken } = this.params;
     try {
@@ -729,15 +784,16 @@ export default class NotificationService {
               },
             ],
           };
-          const res: any = await got.post(url, {
+          const res = await httpClient.request(url, {
             ...this.gotOption,
             json: data,
             headers,
+            method: 'POST',
           });
           if (res.statusCode === 200) {
             return true;
           } else {
-            throw new Error(res.body);
+            throw new Error(await res.body.text());
           }
         }
       }
@@ -756,7 +812,7 @@ export default class NotificationService {
       webhookContentType,
     } = this.params;
 
-    if (!webhookUrl.includes('$title') && !webhookBody.includes('$title')) {
+    if (!webhookUrl?.includes('$title') && !webhookBody?.includes('$title')) {
       throw new Error('Url 或者 Body 中必须包含 $title');
     }
 
@@ -772,15 +828,17 @@ export default class NotificationService {
       allowGetBody: true,
       ...bodyParam,
     };
+
     try {
       const formatUrl = webhookUrl
         ?.replaceAll('$title', encodeURIComponent(this.title))
         ?.replaceAll('$content', encodeURIComponent(this.content));
-      const res = await got(formatUrl, options);
+      const res = await httpClient.request(formatUrl, options);
+      const text = await res.body.text();
       if (String(res.statusCode).startsWith('20')) {
         return true;
       } else {
-        throw new Error(JSON.stringify(res));
+        throw new Error(await res.body.text());
       }
     } catch (error: any) {
       throw new Error(error.response ? error.response.body : error);

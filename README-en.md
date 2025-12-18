@@ -18,9 +18,9 @@ Timed task management platform supporting Python3, JavaScript, Shell, Typescript
 [docker-image-size-image]: https://img.shields.io/docker/image-size/whyour/qinglong?style=flat
 [docker-image-size-url]: https://hub.docker.com/r/whyour/qinglong
 
-[Demo](http://demo.ninesix.cc:4433/) / [Issues](https://github.com/whyour/qinglong/issues) / [Telegram Channel](https://t.me/jiao_long) / [Buy Me a Coffee](https://www.buymeacoffee.com/qinglong)
+[Demo](http://demo.qinglong.online:4433/) / [Issues](https://github.com/whyour/qinglong/issues) / [Telegram Channel](https://t.me/jiao_long) / [Buy Me a Coffee](https://www.buymeacoffee.com/qinglong)
 
-[演示](http://demo.ninesix.cc:4433/) / [反馈](https://github.com/whyour/qinglong/issues) / [Telegram 频道](https://t.me/jiao_long) / [打赏开发者](https://user-images.githubusercontent.com/22700758/244744295-29cd0cd1-c8bb-4ea1-adf6-29bd390ad4dd.jpg)
+[演示](http://demo.qinglong.online:4433/) / [反馈](https://github.com/whyour/qinglong/issues) / [Telegram 频道](https://t.me/jiao_long) / [打赏开发者](https://user-images.githubusercontent.com/22700758/244744295-29cd0cd1-c8bb-4ea1-adf6-29bd390ad4dd.jpg)
 </div>
 
 ![cover](https://user-images.githubusercontent.com/22700758/244847235-8dc1ca21-e03f-4606-9458-0541fab60413.png)
@@ -41,6 +41,8 @@ Timed task management platform supporting Python3, JavaScript, Shell, Typescript
 
 The `latest` image is built on `alpine` and the `debian` image is built on `debian-slim`. If you need to use a dependency that is not supported by `alpine`, it is recommended that you use the `debian` image.
 
+**⚠️ Important**: If you need to run Docker as a **non-root user**, please use the `debian` image. Alpine's `crond` requires root privileges.
+
 ```bash
 docker pull whyour/qinglong:latest
 docker pull whyour/qinglong:debian
@@ -56,138 +58,15 @@ npm i @whyour/qinglong
 
 ## Deployment
 
-### Docker (Recommended)
+[View Documentation](https://qinglong.online/guide/getting-started/installation-guide)
 
-```bash
-# curl -sSL get.docker.com | sh
-docker run -dit \
-  -v $PWD/ql/data:/ql/data \
-  # The 5700 after the colon is the default port, if QlPort is set, it needs to be the same as QlPort.
-  -p 5700:5700 \
-  # Deployment paths are not required, e.g. /test.
-  -e QlBaseUrl="/" \
-  # Deployment port is not required, when using host mode, you can set the port after service startup, default 5700
-  -e QlPort="5700" \
-  --name qinglong \
-  --hostname qinglong \
-  --restart unless-stopped \
-  whyour/qinglong:latest
-```
+## Built-in API
 
-### BaoTa Panel one-click deployment (Recommended)
-
-1. To install Pagoda Panel, go to the official website of [BaoTa Panel](https://www.bt.cn/u/EcDAFU), select the official version of the script to download and install.
-
-2. After installation, login to Pagoda Panel, click `Docker` in the menu bar, the first time you enter, you will be prompted to install `Docker` service, click Install Now, follow the prompts to complete the installation.
-
-3. After the installation is complete, find `Qinglong Panel` in the app shop, click Install, configure the domain name and other basic information to complete the installation.
-
-### Docker-compose (Recommended)
-
-```bash
-# curl -L https://github.com/docker/compose/releases/download/1.16.1/docker-compose-`uname -s`-`uname -m` -o /usr/local/bin/docker-compose
-mkdir qinglong
-wget https://raw.githubusercontent.com/whyour/qinglong/master/docker/docker-compose.yml
-
-# start
-docker-compose up -d
-# stop
-docker-compose down
-```
-
-### Podman (Recommended)
-
-```bash
-# https://podman.io/getting-started/installation
-podman run -dit \
-  --network bridge \
-  -v $PWD/ql/data:/ql/data \
-  # The 5700 after the colon is the default port, if QlPort is set, it needs to be the same as QlPort.
-  -p 5700:5700 \
-  # Deployment paths are not required, e.g. /test.
-  -e QlBaseUrl="/" \
-  # Deployment port is not required, when using host mode, you can set the port after service startup, default 5700
-  -e QlPort="5700" \
-  --name qinglong \
-  --hostname qinglong \
-  docker.io/whyour/qinglong:latest
-```
-
-### Npm (Local)
-
-It is recommended to use a pure system installation to avoid losing the original system data, you need to install node/npm/python3/pip3/pnpm yourself
-
-```bash
-# Debian/Ubuntu
-curl -sL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-```
-
-```bash
-npm install -g node-pre-gyp pnpm@8.3.1
-npm install -g @whyour/qinglong
-qinglong
-# Add the environment variables QL_DIR and QL_DATA_DIR when prompted
-export QL_DIR=""
-export QL_DATA_DIR=""
-# Run again
-qinglong
-```
+[View Documentation](https://qinglong.online/guide/user-guide/built-in-api)
 
 ## Built-in commands
 
-- task
-
-```bash
-# Execute in sequence, if a random delay is set, it will be randomly delayed by a certain number of seconds
-task <file_path>                                             
-# Execute in sequence, regardless of whether a random delay is set, all run immediately, 
-# and the foreground will output the day, while recorded in the log file
-task <file_path> now                                         
-# Concurrent execution, regardless of whether a random delay is set, are run immediately, 
-# the foreground does not generate the day, directly recorded in the log file, and can be specified account execution
-task <file_path> conc <env_name> <account_number>(Optional) 
-# Specify the account to execute and run immediately regardless of whether a random delay is set 
-task <file_path> desi <env_name> <account_number>       
-# Set task timeout   
-task -m <max_time> <file_path>
-# Use -- to split, -- followed by a parameter that is passed to the script, as in the following example, the script receives the parameter -u whyour -p password
-task <file_path> -- -u whyour -p password
-```
-
-- ql
-
-```bash
-# Update and restart Green Dragon
-ql update                                                    
-# Run custom scripts extra.sh
-ql extra                                                     
-# Adding a single script file
-ql raw <file_url>                                             
-# Add a specific script for a single repository
-ql repo <repo_url> <whitelist> <blacklist> <dependence> <branch>   
-# Delete old logs
-ql rmlog <days>                                              
-# Start bot
-ql bot                                                       
-# Detecting the Green Dragon environment and repairing it
-ql check                                                     
-# Reset the number of login errors
-ql resetlet                                                  
-# Disable two-step login
-ql resettfa                                                  
-```
-
-| **Parameter** | **Description** |
-|---|---|
-| file_url | Script address |
-| repo_url | Repository address |
-| whitelist | The whitelist when pulling the repository, i.e., the string contained in the path of the script to be pulled |
-| blacklist | Blacklisting when pulling repositories, i.e. strings that are not included in the path of the script to be pulled |
-| dependence | Pulling the dependencies needed for the repository will be copied directly from the repository to the repository directory under scripts, regardless of the blacklist |
-| extensions | Pull the branch of the repository |
-| branch | Number of days of logs to be kept |
-| days | File path for task execution |
-| file_path | The name of the environment variable that needs to be concurrent or specified at the time of task execution |
+[View Documentation](https://qinglong.online/guide/user-guide/basic-explanation)
 
 ## Development
 

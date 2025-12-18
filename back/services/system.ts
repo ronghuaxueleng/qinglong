@@ -1,13 +1,13 @@
 import { spawn } from 'cross-spawn';
 import { Response } from 'express';
 import fs from 'fs';
-import got from 'got';
+import { Agent, request } from 'undici';
 import sum from 'lodash/sum';
 import path from 'path';
 import { Inject, Service } from 'typedi';
 import winston from 'winston';
 import config from '../config';
-import { TASK_COMMAND } from '../config/const';
+import { NotificationModeStringMap, TASK_COMMAND } from '../config/const';
 import {
   getPid,
   killTask,
@@ -16,6 +16,7 @@ import {
   promiseExec,
   readDirs,
   rmPath,
+  setSystemTimezone,
 } from '../config/util';
 import {
   DependenceModel,
@@ -46,21 +47,25 @@ export default class SystemService {
     @Inject('logger') private logger: winston.Logger,
     private scheduleService: ScheduleService,
     private sockService: SockService,
-  ) {}
+  ) { }
 
   public async getSystemConfig() {
     const doc = await this.getDb({ type: AuthDataType.systemConfig });
-    return doc;
+    return {
+      ...doc,
+      info: { ...doc.info, timezone: doc.info?.timezone || 'Asia/Shanghai' },
+    };
   }
 
   private async updateAuthDb(payload: SystemInfo): Promise<SystemInfo> {
-    await SystemModel.upsert({ ...payload });
-    const doc = await this.getDb({ type: payload.type });
+    const { id, ...others } = payload;
+    await SystemModel.update(others, { where: { id } });
+    const doc = await this.getDb({ id });
     return doc;
   }
 
   public async getDb(query: any): Promise<SystemInfo> {
-    const doc = await SystemModel.findOne({ where: { ...query } });
+    const doc = await SystemModel.findOne({ where: query });
     if (!doc) {
       throw new Error(`System ${JSON.stringify(query)} not found`);
     }
@@ -271,14 +276,18 @@ export default class SystemService {
 
       let lastVersionContent;
       try {
-        const result = await got.get(
+        const { body } = await request(
           `${config.lastVersionFile}?t=${Date.now()}`,
           {
-            timeout: 30000,
+            dispatcher: new Agent({
+              keepAliveTimeout: 30000,
+              keepAliveMaxTimeout: 30000,
+            }),
           },
         );
-        lastVersionContent = parseContentVersion(result.body);
-      } catch (error) {}
+        const text = await body.text();
+        lastVersionContent = parseContentVersion(text);
+      } catch (error) { }
 
       if (!lastVersionContent) {
         lastVersionContent = currentVersionContent;
@@ -352,13 +361,39 @@ export default class SystemService {
 
   public async reloadSystem(target?: 'system' | 'data') {
     const cmd = `real_time=true ql reload ${target || ''}`;
-    const cp = spawn(cmd, { shell: '/bin/bash' });
+    const cp = spawn(cmd, {
+      shell: '/bin/bash',
+      detached: true,
+      stdio: 'ignore',
+    });
     cp.unref();
+    setTimeout(() => {
+      process.exit(0);
+    });
     return { code: 200 };
   }
 
-  public async notify({ title, content }: { title: string; content: string }) {
-    const isSuccess = await this.notificationService.notify(title, content);
+  public async notify({
+    title,
+    content,
+    notificationInfo,
+  }: {
+    title: string;
+    content: string;
+    notificationInfo?: NotificationInfo;
+  }) {
+    const typeString =
+      typeof notificationInfo?.type === 'number'
+        ? NotificationModeStringMap[notificationInfo.type]
+        : undefined;
+    if (notificationInfo && typeString) {
+      notificationInfo.type = typeString;
+    }
+    const isSuccess = await this.notificationService.notify(
+      title,
+      content,
+      notificationInfo,
+    );
     if (isSuccess) {
       return { code: 200, message: '通知发送成功' };
     } else {
@@ -366,11 +401,12 @@ export default class SystemService {
     }
   }
 
-  public async run({ command }: { command: string }, callback: TaskCallbacks) {
+  public async run({ command, logPath }: { command: string; logPath?: string }, callback: TaskCallbacks) {
     if (!command.startsWith(TASK_COMMAND)) {
       command = `${TASK_COMMAND} ${command}`;
     }
-    this.scheduleService.runTask(`real_time=true ${command}`, callback, {
+    const logPathPrefix = logPath ? `real_log_path=${logPath}` : ''
+    this.scheduleService.runTask(`${logPathPrefix} real_time=true ${command}`, callback, {
       command,
       id: command.replace(/ /g, '-'),
       runOrigin: 'system',
@@ -399,10 +435,16 @@ export default class SystemService {
     }
   }
 
-  public async exportData(res: Response) {
+  public async exportData(res: Response, type?: string[]) {
     try {
+      let dataDirs = ['db', 'upload'];
+      if (type && type.length) {
+        dataDirs = dataDirs.concat(type.filter((x) => x !== 'base'));
+      }
+      const dataPaths = dataDirs.map((dir) => `data/${dir}`);
       await promiseExec(
-        `cd ${config.rootPath} && tar -zcvf ${config.dataTgzFile} data/`,
+        `cd ${config.dataPath} && cd ../ && tar -zcvf ${config.dataTgzFile
+        } ${dataPaths.join(' ')}`,
       );
       res.download(config.dataTgzFile);
     } catch (error: any) {
@@ -414,7 +456,7 @@ export default class SystemService {
     try {
       await promiseExec(`rm -rf ${path.join(config.tmpPath, 'data')}`);
       const res = await promiseExec(
-        `cd ${config.tmpPath} && tar -zxvf data.tgz`,
+        `cd ${config.tmpPath} && tar -zxvf ${config.dataTgzFile}`,
       );
       return { code: 200, data: res };
     } catch (error: any) {
@@ -439,7 +481,7 @@ export default class SystemService {
     const logs = result
       .reverse()
       .filter((x) => x.title.endsWith('.log'))
-      .filter((x) => x.mtime >= startTime && x.mtime <= endTime);
+      .filter((x) => x.createTime >= startTime && x.createTime <= endTime);
 
     res.set({
       'Content-Length': sum(logs.map((x) => x.size)),
@@ -469,5 +511,54 @@ export default class SystemService {
     for (const log of logs) {
       await rmPath(path.join(config.systemLogPath, log.title));
     }
+  }
+
+  public async updateTimezone(info: SystemModelInfo) {
+    if (!info.timezone) {
+      info.timezone = 'Asia/Shanghai';
+    }
+    const oDoc = await this.getSystemConfig();
+    await this.updateAuthDb({
+      ...oDoc,
+      info: { ...oDoc.info, ...info },
+    });
+    const success = await setSystemTimezone(info.timezone);
+    if (success) {
+      return { code: 200, data: info };
+    } else {
+      return { code: 400, message: '设置时区失败' };
+    }
+  }
+
+  public async updateGlobalSshKey(info: SystemModelInfo) {
+    const oDoc = await this.getSystemConfig();
+    const result = await this.updateAuthDb({
+      ...oDoc,
+      info: { ...oDoc.info, ...info },
+    });
+    
+    // Apply the global SSH key
+    const SshKeyService = require('./sshKey').default;
+    const Container = require('typedi').Container;
+    const sshKeyService = Container.get(SshKeyService);
+    
+    if (info.globalSshKey) {
+      await sshKeyService.addGlobalSSHKey(info.globalSshKey, 'global');
+    } else {
+      await sshKeyService.removeGlobalSSHKey('global');
+    }
+    
+    return { code: 200, data: result };
+  }
+
+  public async cleanDependence(type: 'node' | 'python3') {
+    if (!type || !['node', 'python3'].includes(type)) {
+      return { code: 400, message: '参数错误' };
+    }
+    try {
+      const finalPath = path.join(config.dependenceCachePath, type);
+      await fs.promises.rm(finalPath, { recursive: true });
+    } catch (error) { }
+    return { code: 200 };
   }
 }

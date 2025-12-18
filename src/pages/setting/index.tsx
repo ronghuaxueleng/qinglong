@@ -49,6 +49,7 @@ const Setting = () => {
     reloadTheme,
     systemInfo,
   } = useOutletContext<SharedContext>();
+  console.log('user',user)
   const columns = [
     {
       title: intl.get('名称'),
@@ -181,9 +182,6 @@ const Setting = () => {
             }
           });
       },
-      onCancel() {
-        console.log('Cancel');
-      },
     });
   };
 
@@ -212,9 +210,6 @@ const Setting = () => {
               handleApp(data);
             }
           });
-      },
-      onCancel() {
-        console.log('Cancel');
       },
     });
   };
@@ -369,11 +364,9 @@ const Setting = () => {
           ]}
         />
       </div>
-      <AppModal
-        visible={isModalVisible}
-        handleCancel={handleCancel}
-        app={editedApp}
-      />
+      {isModalVisible && (
+        <AppModal handleCancel={handleCancel} app={editedApp} />
+      )}
     </PageContainer>
   );
 };

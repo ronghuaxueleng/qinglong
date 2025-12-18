@@ -2,9 +2,9 @@ import sockJs from 'sockjs';
 import { Server } from 'http';
 import { Container } from 'typedi';
 import SockService from '../services/sock';
-import config from '../config/index';
-import fs from 'fs/promises';
-import { getPlatform, safeJSONParse } from '../config/util';
+import { getPlatform } from '../config/util';
+import { shareStore } from '../shared/store';
+import { isValidToken } from '../shared/auth';
 
 export default async ({ server }: { server: Server }) => {
   const echo = sockJs.createServer({ prefix: '/api/ws', log: () => {} });
@@ -15,24 +15,22 @@ export default async ({ server }: { server: Server }) => {
       conn.close('404');
     }
 
-    const data = await fs.readFile(config.authConfigFile, 'utf8');
+    const authInfo = await shareStore.getAuthInfo();
     const platform = getPlatform(conn.headers['user-agent'] || '') || 'desktop';
     const headerToken = conn.url.replace(`${conn.pathname}?token=`, '');
-    if (data) {
-      const { token = '', tokens = {} } = safeJSONParse(data);
-      if (headerToken === token || tokens[platform] === headerToken) {
-        sockService.addClient(conn);
 
-        conn.on('data', (message) => {
-          conn.write(message);
-        });
+    if (isValidToken(authInfo, headerToken, platform)) {
+      sockService.addClient(conn);
 
-        conn.on('close', function () {
-          sockService.removeClient(conn);
-        });
+      conn.on('data', (message) => {
+        conn.write(message);
+      });
 
-        return;
-      }
+      conn.on('close', function () {
+        sockService.removeClient(conn);
+      });
+
+      return;
     }
 
     conn.close('404');

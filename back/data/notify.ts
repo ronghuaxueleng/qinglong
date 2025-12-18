@@ -1,5 +1,3 @@
-import { IncomingHttpHeaders } from 'http';
-
 export enum NotificationMode {
   'gotify' = 'gotify',
   'goCqHttpBot' = 'goCqHttpBot',
@@ -21,6 +19,7 @@ export enum NotificationMode {
   'webhook' = 'webhook',
   'chronocat' = 'Chronocat',
   'ntfy' = 'ntfy',
+  'wxPusherBot' = 'wxPusherBot',
 }
 
 abstract class NotificationBaseInfo {
@@ -48,9 +47,8 @@ export class PushDeerNotification extends NotificationBaseInfo {
   public pushDeerUrl = '';
 }
 
-export class ChatNotification extends NotificationBaseInfo {
-  public chatUrl = '';
-  public chatToken = '';
+export class synologyChatNotification extends NotificationBaseInfo {
+  public synologyChatUrl = '';
 }
 
 export class BarkNotification extends NotificationBaseInfo {
@@ -60,7 +58,7 @@ export class BarkNotification extends NotificationBaseInfo {
   public barkGroup = 'qinglong';
   public barkLevel = 'active';
   public barkUrl = '';
-  public barkArchive=""
+  public barkArchive = '';
 }
 
 export class TelegramBotNotification extends NotificationBaseInfo {
@@ -100,6 +98,11 @@ export class IGotNotification extends NotificationBaseInfo {
 export class PushPlusNotification extends NotificationBaseInfo {
   public pushPlusToken = '';
   public pushPlusUser = '';
+  public pushPlusTemplate = '';
+  public pushplusChannel = '';
+  public pushplusWebhook = '';
+  public pushplusCallbackUrl = '';
+  public pushplusTo = '';
 }
 
 export class WePlusBotNotification extends NotificationBaseInfo {
@@ -112,6 +115,7 @@ export class EmailNotification extends NotificationBaseInfo {
   public emailService: string = '';
   public emailUser: string = '';
   public emailPass: string = '';
+  public emailTo: string = '';
 }
 
 export class PushMeNotification extends NotificationBaseInfo {
@@ -138,19 +142,31 @@ export class WebhookNotification extends NotificationBaseInfo {
 
 export class LarkNotification extends NotificationBaseInfo {
   public larkKey = '';
+  public larkSecret = '';
 }
 
 export class NtfyNotification extends NotificationBaseInfo {
   public ntfyUrl = '';
   public ntfyTopic = '';
   public ntfyPriority = '';
+  public ntfyToken = '';
+  public ntfyUsername = '';
+  public ntfyPassword = '';
+  public ntfyActions = '';
 }
+
+export class WxPusherBotNotification extends NotificationBaseInfo {
+  public wxPusherBotAppToken = '';
+  public wxPusherBotTopicIds = '';
+  public wxPusherBotUids = '';
+}
+
 export interface NotificationInfo
   extends GoCqHttpBotNotification,
     GotifyNotification,
     ServerChanNotification,
     PushDeerNotification,
-    ChatNotification,
+    synologyChatNotification,
     BarkNotification,
     TelegramBotNotification,
     DingtalkBotNotification,
@@ -165,5 +181,5 @@ export interface NotificationInfo
     WebhookNotification,
     ChronocatNotification,
     LarkNotification,
-    NtfyNotification {}
-
+    NtfyNotification,
+    WxPusherBotNotification {}

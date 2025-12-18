@@ -1,4 +1,5 @@
 const { execSync } = require('child_process');
+const client = require('./client.js');
 require(`./env.js`);
 
 function expandRange(rangeStr, max) {
@@ -37,36 +38,59 @@ function run() {
 
     const splitStr = '__sitecustomize__';
     const fileName = process.argv[1].replace(`${dir_scripts}/`, '');
-    let command = `bash -c "source ${file_task_before} ${fileName}`;
+    const tempFile = `/tmp/env_${process.pid}.json`;
+
+    const commands = [
+      `source ${file_task_before} ${fileName}`,
+      task_before ? `eval '${task_before.replace(/'/g, "'\\''")}'` : null,
+      `echo -e '${splitStr}'`,
+      `node -e "require('fs').writeFileSync('${tempFile}', JSON.stringify(process.env))"`,
+    ].filter(Boolean);
+
     if (task_before) {
-      const escapeTaskBefore = task_before
-        .replace(/"/g, '\\"')
-        .replace(/\$/g, '\\$');
-      command = `${command} && eval '${escapeTaskBefore}'`;
       console.log('执行前置命令\n');
     }
-    const res = execSync(
-      `${command} && echo -e '${splitStr}' && node -p 'JSON.stringify(process.env)'"`,
-      {
-        encoding: 'utf-8',
-      },
-    );
-    const [output, envStr] = res.split(splitStr);
-    const newEnvObject = JSON.parse(envStr.trim());
-    for (const key in newEnvObject) {
-      process.env[key] = newEnvObject[key];
+
+    const res = execSync(commands.join(' && '), {
+      encoding: 'utf-8',
+      maxBuffer: 50 * 1024 * 1024,
+      shell: '/bin/bash',
+    });
+
+    const [output] = res.split(splitStr);
+
+    try {
+      const envStr = require('fs').readFileSync(tempFile, 'utf-8');
+      const newEnvObject = JSON.parse(envStr);
+      if (typeof newEnvObject === 'object' && newEnvObject !== null) {
+        for (const key in newEnvObject) {
+          if (Object.prototype.hasOwnProperty.call(newEnvObject, key)) {
+            process.env[key] = newEnvObject[key];
+          }
+        }
+      }
+      require('fs').unlinkSync(tempFile);
+    } catch (jsonError) {
+      console.log(
+        '\ue926 Failed to parse environment variables:',
+        jsonError.message,
+      );
+      try {
+        require('fs').unlinkSync(tempFile);
+      } catch (e) {}
     }
-    console.log(output);
+
+    if (output) {
+      console.log(output);
+    }
     if (task_before) {
       console.log('执行前置命令结束\n');
     }
   } catch (error) {
-    if (!error.message.includes('spawnSync /bin/sh E2BIG')) {
+    if (!error.message.includes('spawnSync /bin/bash E2BIG')) {
       console.log(`\ue926 run task before error: `, error);
     } else {
-      console.log(
-        `\ue926 The environment variable is too large. It is recommended to use task_before.js instead of task_before.sh\n`,
-      );
+      // environment variable is too large
     }
     if (task_before) {
       console.log('执行前置命令结束\n');
@@ -89,11 +113,16 @@ try {
     return;
   }
 
+  process.on('SIGTERM', (code) => {
+    process.exit(15);
+  });
+
   run();
 
-  const { sendNotify } = require('./notify.js');
+  const { sendNotify } = require('./__ql_notify__.js');
   global.QLAPI = {
     notify: sendNotify,
+    ...client,
   };
 } catch (error) {
   console.log(`run builtin code error: `, error, '\n');

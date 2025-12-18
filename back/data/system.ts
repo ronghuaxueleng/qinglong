@@ -27,6 +27,7 @@ export enum AuthDataType {
   'notification' = 'notification',
   'removeLogFrequency' = 'removeLogFrequency',
   'systemConfig' = 'systemConfig',
+  'authConfig' = 'authConfig',
 }
 
 export interface SystemConfigInfo {
@@ -36,6 +37,8 @@ export interface SystemConfigInfo {
   nodeMirror?: string;
   pythonMirror?: string;
   linuxMirror?: string;
+  timezone?: string;
+  globalSshKey?: string;
 }
 
 export interface LoginLogInfo {
@@ -46,11 +49,43 @@ export interface LoginLogInfo {
   status?: LoginStatus;
 }
 
+export interface TokenInfo {
+  value: string;
+  timestamp: number;
+  ip: string;
+  address: string;
+  platform: string;
+  /**
+   * Token expiration time in seconds since Unix epoch.
+   * If undefined, the token uses JWT's built-in expiration.
+   */
+  expiration?: number;
+}
+
+export interface AuthInfo {
+  username: string;
+  password: string;
+  retries: number;
+  lastlogon: number;
+  lastip: string;
+  lastaddr: string;
+  platform: string;
+  isTwoFactorChecking: boolean;
+  token: string;
+  tokens: Record<string, string | TokenInfo[]>;
+  twoFactorActivated: boolean;
+  twoFactorSecret: string;
+  avatar: string;
+}
+
 export type SystemModelInfo = SystemConfigInfo &
   Partial<NotificationInfo> &
-  LoginLogInfo;
+  LoginLogInfo &
+  Partial<AuthInfo>;
 
-export interface SystemInstance extends Model<SystemInfo, SystemInfo>, SystemInfo { }
+export interface SystemInstance
+  extends Model<SystemInfo, SystemInfo>,
+    SystemInfo {}
 export const SystemModel = sequelize.define<SystemInstance>('Auth', {
   ip: DataTypes.STRING,
   type: DataTypes.STRING,

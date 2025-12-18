@@ -1,35 +1,21 @@
-import intl from 'react-intl-universal';
-import React, { useEffect, useState } from 'react';
-import ProLayout, { PageLoading } from '@ant-design/pro-layout';
-import * as DarkReader from '@umijs/ssr-darkreader';
-import defaultProps from './defaultProps';
-import { Link, history, Outlet, useLocation } from '@umijs/max';
+import config from '@/utils/config';
+import { useCtx, useTheme } from '@/utils/hooks';
+import { request } from '@/utils/http';
 import {
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import config from '@/utils/config';
-import { request } from '@/utils/http';
-import './index.less';
+import ProLayout, { PageLoading } from '@ant-design/pro-layout';
+import { history, Link, Outlet, useLocation } from '@umijs/max';
+import * as DarkReader from '@umijs/ssr-darkreader';
+import { Avatar, Badge, Dropdown, Image, MenuProps, Tooltip } from 'antd';
+import React, { useEffect, useState } from 'react';
+import intl from 'react-intl-universal';
 import vhCheck from 'vh-check';
-import { useCtx, useTheme } from '@/utils/hooks';
-import {
-  message,
-  Badge,
-  Modal,
-  Avatar,
-  Dropdown,
-  Menu,
-  Image,
-  Popover,
-  Descriptions,
-  Tooltip,
-  MenuProps,
-} from 'antd';
-// @ts-ignore
-import * as Sentry from '@sentry/react';
+import defaultProps from './defaultProps';
+import './index.less';
 import { init } from '../utils/init';
 import WebSocketManager from '../utils/websocket';
 
@@ -115,16 +101,21 @@ export default function () {
 
   const getHealthStatus = () => {
     request
-      .get(`${config.apiPrefix}public/health`)
+      .get(`${config.apiPrefix}health`)
       .then((res) => {
-        if (res?.data?.status === 1) {
+        if (res?.data?.status === 'ok') {
           getSystemInfo();
         } else {
           history.push('/error');
         }
       })
       .catch((error) => {
-        history.push('/error');
+        const responseStatus = error.response.status;
+        if (responseStatus !== 401) {
+          history.push('/error');
+        } else {
+          window.location.reload();
+        }
       })
       .finally(() => setInitLoading(false));
   };
@@ -178,9 +169,9 @@ export default function () {
   useEffect(() => {
     if (!user || !user.username) return;
     const ws = WebSocketManager.getInstance(
-      `${window.location.origin}${config.apiPrefix}ws?token=${localStorage.getItem(
-        config.authKey,
-      )}`,
+      `${window.location.origin}${
+        config.apiPrefix
+      }ws?token=${localStorage.getItem(config.authKey)}`,
     );
 
     return () => {
@@ -200,9 +191,6 @@ export default function () {
       );
       console.log(
         `从开始至load总耗时: ${timing.loadEventEnd - timing.navigationStart}`,
-      );
-      Sentry.captureMessage(
-        `白屏时间 ${timing.responseStart - timing.navigationStart}`,
       );
     };
   }, []);
@@ -254,18 +242,15 @@ export default function () {
     <ProLayout
       selectedKeys={[location.pathname]}
       loading={loading}
-      ErrorBoundary={Sentry.ErrorBoundary}
       logo={
         <>
           <Image preview={false} src="https://qn.whyour.cn/logo.png" />
           <div className="title">
             <span className="title">{intl.get('青龙')}</span>
-            <a
-              href={systemInfo?.changeLogLink}
-              target="_blank"
-              rel="noopener noreferrer"
+            <span
               onClick={(e) => {
                 e.stopPropagation();
+                window.open(systemInfo?.changeLogLink, '_blank');
               }}
             >
               <Tooltip
@@ -289,7 +274,7 @@ export default function () {
                   </span>
                 </Badge>
               </Tooltip>
-            </a>
+            </span>
           </div>
         </>
       }
@@ -320,7 +305,9 @@ export default function () {
                 shape="square"
                 size="small"
                 icon={<UserOutlined />}
-                src={user.avatar ? `${config.apiPrefix}static/${user.avatar}` : ''}
+                src={
+                  user.avatar ? `${config.apiPrefix}static/${user.avatar}` : ''
+                }
               />
               <span style={{ marginLeft: 5 }}>{user.username}</span>
             </span>
@@ -342,7 +329,11 @@ export default function () {
                   shape="square"
                   size="small"
                   icon={<UserOutlined />}
-                  src={user.avatar ? `${config.apiPrefix}static/${user.avatar}` : ''}
+                  src={
+                    user.avatar
+                      ? `${config.apiPrefix}static/${user.avatar}`
+                      : ''
+                  }
                 />
                 <span style={{ marginLeft: 5 }}>{user.username}</span>
               </span>

@@ -8,6 +8,7 @@ import path from 'path';
 import { v4 as uuidV4 } from 'uuid';
 import rateLimit from 'express-rate-limit';
 import config from '../config';
+import { isDemoEnv, getToken } from '../config/util';
 const route = Router();
 
 const storage = multer.diskStorage({
@@ -55,7 +56,8 @@ export default (app: Router) => {
       const logger: Logger = Container.get('logger');
       try {
         const userService = Container.get(UserService);
-        await userService.logout(req.platform);
+        const token = getToken(req);
+        await userService.logout(req.platform, token);
         res.send({ code: 200 });
       } catch (e) {
         return next(e);
@@ -72,9 +74,8 @@ export default (app: Router) => {
       }),
     }),
     async (req: Request, res: Response, next: NextFunction) => {
-      const logger: Logger = Container.get('logger');
       try {
-        if (process.env.DeployEnv === 'demo') {
+        if (isDemoEnv()) {
           return res.send({ code: 450, message: '未知错误' });
         }
         const userService = Container.get(UserService);
@@ -90,7 +91,7 @@ export default (app: Router) => {
     const logger: Logger = Container.get('logger');
     try {
       const userService = Container.get(UserService);
-      const authInfo = await userService.getUserInfo();
+      const authInfo = await userService.getAuthInfo();
       res.send({
         code: 200,
         data: {

@@ -1,15 +1,7 @@
 import { Service, Inject } from 'typedi';
 import winston from 'winston';
-import {
-  createFile,
-  createRandomString,
-  fileExist,
-  getNetIp,
-  getPlatform,
-  safeJSONParse,
-} from '../config/util';
+import { createRandomString } from '../config/util';
 import config from '../config';
-import * as fs from 'fs/promises';
 import jwt from 'jsonwebtoken';
 import { authenticator } from '@otplib/preset-default';
 import {
@@ -18,6 +10,8 @@ import {
   SystemModel,
   SystemModelInfo,
   LoginStatus,
+  AuthInfo,
+  TokenInfo,
 } from '../data/system';
 import { NotificationInfo } from '../data/notify';
 import NotificationService from './notify';
@@ -28,6 +22,9 @@ import dayjs from 'dayjs';
 import IP2Region from 'ip2region';
 import requestIp from 'request-ip';
 import uniq from 'lodash/uniq';
+import pickBy from 'lodash/pickBy';
+import isNil from 'lodash/isNil';
+import { shareStore } from '../shared/store';
 
 @Service()
 export default class UserService {
@@ -48,163 +45,184 @@ export default class UserService {
     req: Request,
     needTwoFactor = true,
   ): Promise<any> {
-    const _exist = await fileExist(config.authConfigFile);
-    if (!_exist) {
-      return this.initAuthInfo();
-    }
-
     let { username, password } = payloads;
     const content = await this.getAuthInfo();
     const timestamp = Date.now();
-    if (content) {
-      let {
-        username: cUsername,
-        password: cPassword,
-        retries = 0,
-        lastlogon,
-        lastip,
-        lastaddr,
-        twoFactorActivated,
-        twoFactorActived,
-        tokens = {},
-        platform,
-      } = content;
-      // patch old field
-      twoFactorActivated = twoFactorActivated || twoFactorActived;
+    let {
+      username: cUsername,
+      password: cPassword,
+      retries = 0,
+      lastlogon,
+      lastip,
+      lastaddr,
+      twoFactorActivated,
+      tokens = {},
+      platform,
+    } = content;
+    const retriesTime = Math.pow(3, retries) * 1000;
+    if (retries > 2 && timestamp - lastlogon < retriesTime) {
+      const waitTime = Math.ceil(
+        (retriesTime - (timestamp - lastlogon)) / 1000,
+      );
+      return {
+        code: 410,
+        message: `失败次数过多，请${waitTime}秒后重试`,
+        data: waitTime,
+      };
+    }
 
-      if (
-        (cUsername === 'admin' && cPassword === 'admin') ||
-        !cUsername ||
-        !cPassword
-      ) {
-        return this.initAuthInfo();
-      }
+    if (
+      username === cUsername &&
+      password === cPassword &&
+      twoFactorActivated &&
+      needTwoFactor
+    ) {
+      await this.updateAuthInfo(content, {
+        isTwoFactorChecking: true,
+      });
+      return {
+        code: 420,
+        message: '',
+      };
+    }
 
-      const retriesTime = Math.pow(3, retries) * 1000;
-      if (retries > 2 && timestamp - lastlogon < retriesTime) {
-        const waitTime = Math.ceil(
-          (retriesTime - (timestamp - lastlogon)) / 1000,
-        );
+    const ip = requestIp.getClientIp(req) || '';
+    const query = new IP2Region();
+    const ipAddress = query.search(ip);
+    let address = '';
+    if (ipAddress) {
+      const { country, province, city, isp } = ipAddress;
+      address = uniq([country, province, city, isp]).filter(Boolean).join(' ');
+    }
+    if (username === cUsername && password === cPassword) {
+      const data = createRandomString(50, 100);
+      const expiration = twoFactorActivated ? '60d' : '20d';
+      let token = jwt.sign({ data }, config.jwt.secret, {
+        expiresIn: config.jwt.expiresIn || expiration,
+        algorithm: 'HS384',
+      });
+
+      const tokenInfo: TokenInfo = {
+        value: token,
+        timestamp,
+        ip,
+        address,
+        platform: req.platform,
+      };
+
+      const updatedTokens = this.addTokenToList(
+        tokens,
+        req.platform,
+        tokenInfo,
+      );
+
+      await this.updateAuthInfo(content, {
+        token,
+        tokens: updatedTokens,
+        lastlogon: timestamp,
+        retries: 0,
+        lastip: ip,
+        lastaddr: address,
+        platform: req.platform,
+        isTwoFactorChecking: false,
+      });
+      this.notificationService.notify(
+        '登录通知',
+        `你于${dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss')}在 ${address} ${
+          req.platform
+        }端 登录成功，ip地址 ${ip}`,
+      );
+      await this.insertDb({
+        type: AuthDataType.loginLog,
+        info: {
+          timestamp,
+          address,
+          ip,
+          platform: req.platform,
+          status: LoginStatus.success,
+        },
+      });
+      this.getLoginLog();
+      return {
+        code: 200,
+        data: {
+          token,
+          lastip,
+          lastaddr,
+          lastlogon,
+          retries,
+          platform,
+        },
+      };
+    } else {
+      await this.updateAuthInfo(content, {
+        retries: retries + 1,
+        lastlogon: timestamp,
+        lastip: ip,
+        lastaddr: address,
+        platform: req.platform,
+      });
+      this.notificationService.notify(
+        '登录通知',
+        `你于${dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss')}在 ${address} ${
+          req.platform
+        }端 登录失败，ip地址 ${ip}`,
+      );
+      await this.insertDb({
+        type: AuthDataType.loginLog,
+        info: {
+          timestamp,
+          address,
+          ip,
+          platform: req.platform,
+          status: LoginStatus.fail,
+        },
+      });
+      this.getLoginLog();
+      if (retries > 2) {
+        const waitTime = Math.round(Math.pow(3, retries + 1));
         return {
           code: 410,
           message: `失败次数过多，请${waitTime}秒后重试`,
           data: waitTime,
         };
-      }
-
-      if (
-        username === cUsername &&
-        password === cPassword &&
-        twoFactorActivated &&
-        needTwoFactor
-      ) {
-        this.updateAuthInfo(content, {
-          isTwoFactorChecking: true,
-        });
-        return {
-          code: 420,
-          message: '',
-        };
-      }
-
-      const ip = requestIp.getClientIp(req) || '';
-      const query = new IP2Region();
-      const ipAddress = query.search(ip);
-      let address = '';
-      if (ipAddress) {
-        const { country, province, city, isp } = ipAddress;
-        address = uniq([country, province, city, isp])
-          .filter(Boolean)
-          .join(' ');
-      }
-      if (username === cUsername && password === cPassword) {
-        const data = createRandomString(50, 100);
-        const expiration = twoFactorActivated ? 60 : 20;
-        let token = jwt.sign({ data }, config.secret as any, {
-          expiresIn: 60 * 60 * 24 * expiration,
-          algorithm: 'HS384',
-        });
-
-        this.updateAuthInfo(content, {
-          token,
-          tokens: {
-            ...tokens,
-            [req.platform]: token,
-          },
-          lastlogon: timestamp,
-          retries: 0,
-          lastip: ip,
-          lastaddr: address,
-          platform: req.platform,
-          isTwoFactorChecking: false,
-        });
-        this.notificationService.notify(
-          '登录通知',
-          `你于${dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss')}在 ${address} ${
-            req.platform
-          }端 登录成功，ip地址 ${ip}`,
-        );
-        await this.insertDb({
-          type: AuthDataType.loginLog,
-          info: {
-            timestamp,
-            address,
-            ip,
-            platform: req.platform,
-            status: LoginStatus.success,
-          },
-        });
-        this.getLoginLog();
-        return {
-          code: 200,
-          data: { token, lastip, lastaddr, lastlogon, retries, platform },
-        };
       } else {
-        this.updateAuthInfo(content, {
-          retries: retries + 1,
-          lastlogon: timestamp,
-          lastip: ip,
-          lastaddr: address,
-          platform: req.platform,
-        });
-        this.notificationService.notify(
-          '登录通知',
-          `你于${dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss')}在 ${address} ${
-            req.platform
-          }端 登录失败，ip地址 ${ip}`,
-        );
-        await this.insertDb({
-          type: AuthDataType.loginLog,
-          info: {
-            timestamp,
-            address,
-            ip,
-            platform: req.platform,
-            status: LoginStatus.fail,
-          },
-        });
-        this.getLoginLog();
-        if (retries > 2) {
-          const waitTime = Math.round(Math.pow(3, retries + 1));
-          return {
-            code: 410,
-            message: `失败次数过多，请${waitTime}秒后重试`,
-            data: waitTime,
-          };
-        } else {
-          return { code: 400, message: config.authError };
-        }
+        return { code: 400, message: config.authError };
       }
-    } else {
-      return this.initAuthInfo();
     }
   }
 
-  public async logout(platform: string): Promise<any> {
+  public async logout(platform: string, tokenValue: string): Promise<any> {
+    if (!platform || !tokenValue) {
+      this.logger.warn('Invalid logout parameters - empty platform or token');
+      return;
+    }
+
     const authInfo = await this.getAuthInfo();
-    this.updateAuthInfo(authInfo, {
-      token: '',
-      tokens: { ...authInfo.tokens, [platform]: '' },
+
+    // Verify the token exists before attempting to remove it
+    const tokenExists = this.findTokenInList(
+      authInfo.tokens,
+      platform,
+      tokenValue,
+    );
+    if (!tokenExists && authInfo.token !== tokenValue) {
+      // Token not found, but don't throw error - user may have already logged out
+      this.logger.info(
+        `Logout attempted for non-existent token on platform: ${platform}`,
+      );
+      return;
+    }
+
+    const updatedTokens = this.removeTokenFromList(
+      authInfo.tokens,
+      platform,
+      tokenValue,
+    );
+
+    await this.updateAuthInfo(authInfo, {
+      token: authInfo.token === tokenValue ? '' : authInfo.token,
+      tokens: updatedTokens,
     });
   }
 
@@ -232,20 +250,6 @@ export default class UserService {
     return doc;
   }
 
-  private async initAuthInfo() {
-    await fs.writeFile(
-      config.authConfigFile,
-      JSON.stringify({
-        username: 'admin',
-        password: 'admin',
-      }),
-    );
-    return {
-      code: 100,
-      message: '未找到认证文件，重新初始化',
-    };
-  }
-
   public async updateUsernameAndPassword({
     username,
     password,
@@ -257,35 +261,21 @@ export default class UserService {
       return { code: 400, message: '密码不能设置为admin' };
     }
     const authInfo = await this.getAuthInfo();
-    this.updateAuthInfo(authInfo, { username, password });
+    await this.updateAuthInfo(authInfo, { username, password });
     return { code: 200, message: '更新成功' };
   }
 
   public async updateAvatar(avatar: string) {
     const authInfo = await this.getAuthInfo();
-    this.updateAuthInfo(authInfo, { avatar });
+    await this.updateAuthInfo(authInfo, { avatar });
     return { code: 200, data: avatar, message: '更新成功' };
-  }
-
-  public async getUserInfo(): Promise<any> {
-    const authFileExist = await fileExist(config.authConfigFile);
-    if (!authFileExist) {
-      await createFile(
-        config.authConfigFile,
-        JSON.stringify({
-          username: 'admin',
-          password: 'admin',
-        }),
-      );
-    }
-    return await this.getAuthInfo();
   }
 
   public async initTwoFactor() {
     const secret = authenticator.generateSecret();
     const authInfo = await this.getAuthInfo();
     const otpauth = authenticator.keyuri(authInfo.username, 'qinglong', secret);
-    this.updateAuthInfo(authInfo, { twoFactorSecret: secret });
+    await this.updateAuthInfo(authInfo, { twoFactorSecret: secret });
     return { secret, url: otpauth };
   }
 
@@ -296,7 +286,7 @@ export default class UserService {
       secret: authInfo.twoFactorSecret,
     });
     if (isValid) {
-      this.updateAuthInfo(authInfo, { twoFactorActivated: true });
+      await this.updateAuthInfo(authInfo, { twoFactorActivated: true });
     }
     return isValid;
   }
@@ -321,8 +311,17 @@ export default class UserService {
     if (isValid) {
       return this.login({ username, password }, req, false);
     } else {
-      const { ip, address } = await getNetIp(req);
-      this.updateAuthInfo(authInfo, {
+      const ip = requestIp.getClientIp(req) || '';
+      const query = new IP2Region();
+      const ipAddress = query.search(ip);
+      let address = '';
+      if (ipAddress) {
+        const { country, province, city, isp } = ipAddress;
+        address = uniq([country, province, city, isp])
+          .filter(Boolean)
+          .join(' ');
+      }
+      await this.updateAuthInfo(authInfo, {
         lastip: ip,
         lastaddr: address,
         platform: req.platform,
@@ -333,24 +332,29 @@ export default class UserService {
 
   public async deactiveTwoFactor() {
     const authInfo = await this.getAuthInfo();
-    this.updateAuthInfo(authInfo, {
+    await this.updateAuthInfo(authInfo, {
       twoFactorActivated: false,
-      twoFactorActived: false,
       twoFactorSecret: '',
     });
     return true;
   }
 
-  private async getAuthInfo() {
-    const content = await fs.readFile(config.authConfigFile, 'utf8');
-    return safeJSONParse(content);
+  public async getAuthInfo() {
+    const authInfo = await shareStore.getAuthInfo();
+    if (authInfo) {
+      return authInfo;
+    }
+    const doc = await this.getDb({ type: AuthDataType.authConfig });
+    return (doc.info || {}) as AuthInfo;
   }
 
-  private async updateAuthInfo(authInfo: any, info: any) {
-    await fs.writeFile(
-      config.authConfigFile,
-      JSON.stringify({ ...authInfo, ...info }),
-    );
+  private async updateAuthInfo(authInfo: AuthInfo, info: Partial<AuthInfo>) {
+    const result = { ...authInfo, ...info };
+    await shareStore.updateAuthInfo(result);
+    await this.updateAuthDb({
+      type: AuthDataType.authConfig,
+      info: result,
+    });
   }
 
   public async getNotificationMode(): Promise<NotificationInfo> {
@@ -359,7 +363,7 @@ export default class UserService {
   }
 
   private async updateAuthDb(payload: SystemInfo): Promise<any> {
-    let doc = await SystemModel.findOne({ type: payload.type });
+    let doc = await SystemModel.findOne({ where: { type: payload.type } });
     if (doc) {
       const updateResult = await SystemModel.update(payload, {
         where: { id: doc.id },
@@ -396,5 +400,115 @@ export default class UserService {
     } else {
       return { code: 400, message: '通知发送失败，请检查参数' };
     }
+  }
+
+  private normalizeTokens(
+    tokens: Record<string, string | TokenInfo[]>,
+  ): Record<string, TokenInfo[]> {
+    const normalized: Record<string, TokenInfo[]> = {};
+
+    for (const [platform, value] of Object.entries(tokens)) {
+      if (typeof value === 'string') {
+        // Legacy format: convert string token to TokenInfo array
+        if (value) {
+          normalized[platform] = [
+            {
+              value,
+              timestamp: Date.now(),
+              ip: '',
+              address: '',
+              platform,
+            },
+          ];
+        } else {
+          normalized[platform] = [];
+        }
+      } else {
+        // Already in new format
+        normalized[platform] = value || [];
+      }
+    }
+
+    return normalized;
+  }
+
+  private addTokenToList(
+    tokens: Record<string, string | TokenInfo[]>,
+    platform: string,
+    tokenInfo: TokenInfo,
+    maxTokensPerPlatform: number = config.maxTokensPerPlatform,
+  ): Record<string, TokenInfo[]> {
+    // Validate maxTokensPerPlatform parameter
+    if (!Number.isInteger(maxTokensPerPlatform) || maxTokensPerPlatform < 1) {
+      this.logger.warn(
+        `Invalid maxTokensPerPlatform value: ${maxTokensPerPlatform}, using default`,
+      );
+      maxTokensPerPlatform = config.maxTokensPerPlatform;
+    }
+
+    const normalized = this.normalizeTokens(tokens);
+
+    if (!normalized[platform]) {
+      normalized[platform] = [];
+    }
+
+    // Add new token
+    normalized[platform].unshift(tokenInfo);
+
+    // Limit the number of active tokens per platform
+    if (normalized[platform].length > maxTokensPerPlatform) {
+      normalized[platform] = normalized[platform].slice(
+        0,
+        maxTokensPerPlatform,
+      );
+    }
+
+    return normalized;
+  }
+
+  private removeTokenFromList(
+    tokens: Record<string, string | TokenInfo[]>,
+    platform: string,
+    tokenValue: string,
+  ): Record<string, TokenInfo[]> {
+    const normalized = this.normalizeTokens(tokens);
+
+    if (normalized[platform]) {
+      normalized[platform] = normalized[platform].filter(
+        (t) => t.value !== tokenValue,
+      );
+    }
+
+    return normalized;
+  }
+
+  private findTokenInList(
+    tokens: Record<string, string | TokenInfo[]>,
+    platform: string,
+    tokenValue: string,
+  ): TokenInfo | undefined {
+    const normalized = this.normalizeTokens(tokens);
+
+    if (normalized[platform]) {
+      return normalized[platform].find((t) => t.value === tokenValue);
+    }
+
+    return undefined;
+  }
+
+  public async resetAuthInfo(info: Partial<AuthInfo>) {
+    const { retries, twoFactorActivated, password, username } = info;
+    const authInfo = await this.getAuthInfo();
+    const payload = pickBy(
+      {
+        retries,
+        twoFactorActivated,
+        password,
+        username,
+      },
+      (x) => !isNil(x),
+    );
+
+    await this.updateAuthInfo(authInfo, payload);
   }
 }

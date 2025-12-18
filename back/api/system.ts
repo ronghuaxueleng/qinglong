@@ -14,6 +14,7 @@ import {
 } from '../config/util';
 import dayjs from 'dayjs';
 import multer from 'multer';
+import { logStreamManager } from '../shared/logStreamManager';
 
 const route = Router();
 const storage = multer.diskStorage({
@@ -33,7 +34,7 @@ export default (app: Router) => {
     const logger: Logger = Container.get('logger');
     try {
       const userService = Container.get(UserService);
-      const authInfo = await userService.getUserInfo();
+      const authInfo = await userService.getAuthInfo();
       const { version, changeLog, changeLogLink, publishTime } =
         await parseVersion(config.versionFile);
 
@@ -273,19 +274,22 @@ export default (app: Router) => {
           {
             onStart: async (cp, startTime) => {
               res.setHeader('QL-Task-Pid', `${cp.pid}`);
+              res.setHeader('QL-Task-Log', `${logPath}`);
             },
             onEnd: async (cp, endTime, diff) => {
+              // Close the stream after task completion
+              await logStreamManager.closeStream(await handleLogPath(logPath));
               res.end();
             },
             onError: async (message: string) => {
-              res.write(`\n${message}`);
+              res.write(message);
               const absolutePath = await handleLogPath(logPath);
-              await fs.appendFile(absolutePath, `\n${message}`);
+              await logStreamManager.write(absolutePath, message);
             },
             onLog: async (message: string) => {
-              res.write(`\n${message}`);
+              res.write(message);
               const absolutePath = await handleLogPath(logPath);
-              await fs.appendFile(absolutePath, `\n${message}`);
+              await logStreamManager.write(absolutePath, message);
             },
           },
         );
@@ -316,10 +320,15 @@ export default (app: Router) => {
 
   route.put(
     '/data/export',
+    celebrate({
+      body: Joi.object({
+        type: Joi.array().items(Joi.string()).optional(),
+      }),
+    }),
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const systemService = Container.get(SystemService);
-        await systemService.exportData(res);
+        await systemService.exportData(res, req.body.type);
       } catch (e) {
         return next(e);
       }
@@ -372,6 +381,81 @@ export default (app: Router) => {
         const systemService = Container.get(SystemService);
         await systemService.deleteSystemLog();
         res.send({ code: 200 });
+      } catch (e) {
+        return next(e);
+      }
+    },
+  );
+
+  route.put(
+    '/auth/reset',
+    celebrate({
+      body: Joi.object({
+        retries: Joi.number().optional(),
+        twoFactorActivated: Joi.boolean().optional(),
+        password: Joi.string().optional(),
+        username: Joi.string().optional(),
+      }),
+    }),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const userService = Container.get(UserService);
+        await userService.resetAuthInfo(req.body);
+        res.send({ code: 200, message: '更新成功' });
+      } catch (e) {
+        return next(e);
+      }
+    },
+  );
+
+  route.put(
+    '/config/timezone',
+    celebrate({
+      body: Joi.object({
+        timezone: Joi.string().allow('').allow(null),
+      }),
+    }),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const systemService = Container.get(SystemService);
+        const result = await systemService.updateTimezone(req.body);
+        res.send(result);
+      } catch (e) {
+        return next(e);
+      }
+    },
+  );
+
+  route.put(
+    '/config/global-ssh-key',
+    celebrate({
+      body: Joi.object({
+        globalSshKey: Joi.string().allow('').allow(null),
+      }),
+    }),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const systemService = Container.get(SystemService);
+        const result = await systemService.updateGlobalSshKey(req.body);
+        res.send(result);
+      } catch (e) {
+        return next(e);
+      }
+    },
+  );
+
+  route.put(
+    '/config/dependence-clean',
+    celebrate({
+      body: Joi.object({
+        type: Joi.string().allow(''),
+      }),
+    }),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const systemService = Container.get(SystemService);
+        const result = await systemService.cleanDependence(req.body.type);
+        res.send(result);
       } catch (e) {
         return next(e);
       }

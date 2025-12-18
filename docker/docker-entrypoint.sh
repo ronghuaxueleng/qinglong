@@ -1,44 +1,56 @@
 #!/bin/bash
 
+export PATH="$HOME/bin:$PATH"
+
 dir_shell=/ql/shell
 . $dir_shell/share.sh
-. $dir_shell/env.sh
 
-echo -e "======================1. 检测配置文件========================\n"
+export_ql_envs() {
+  export BACK_PORT="${ql_port}"
+  export GRPC_PORT="${ql_grpc_port}"
+}
+
+log_with_style() {
+  local level="$1"
+  local message="$2"
+  local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+  printf "\n[%s] [%7s]  %s\n" "${timestamp}" "${level}" "${message}"
+}
+
+# Fix DNS resolution issues in Alpine Linux
+# Alpine uses musl libc which has known DNS resolver issues with certain domains
+# Adding ndots:0 prevents unnecessary search domain appending
+if [ -f /etc/alpine-release ]; then
+  if ! grep -q "^options ndots:0" /etc/resolv.conf 2>/dev/null; then
+    echo "options ndots:0" >> /etc/resolv.conf
+    log_with_style "INFO" "🔧  0. 已配置 DNS 解析优化 (ndots:0)"
+  fi
+fi
+
+log_with_style "INFO" "🚀  1. 检测配置文件..."
+load_ql_envs
+export_ql_envs
+. $dir_shell/env.sh
 import_config "$@"
-make_dir /etc/nginx/conf.d
-make_dir /run/nginx
-init_nginx
 fix_config
 
-pm2 l &>/dev/null
+# Try to initialize PM2, but don't fail if it doesn't work
+pm2 l &>/dev/null || log_with_style "WARN" "PM2 初始化可能失败，将在启动时尝试使用备用方案"
 
-echo -e "======================2. 安装依赖========================\n"
-patch_version
-
-echo -e "======================3. 启动nginx========================\n"
-nginx -s reload 2>/dev/null || nginx -c /etc/nginx/nginx.conf
-echo -e "nginx启动成功...\n"
-
-echo -e "======================4. 启动pm2服务========================\n"
-reload_update
+log_with_style "INFO" "⚙️  2. 启动 pm2 服务..."
 reload_pm2
 
 if [[ $AutoStartBot == true ]]; then
-  echo -e "======================5. 启动bot========================\n"
+  log_with_style "INFO" "🤖  3. 启动 bot..."
   nohup ql bot >$dir_log/bot.log 2>&1 &
-  echo -e "bot后台启动中...\n"
 fi
 
 if [[ $EnableExtraShell == true ]]; then
-  echo -e "====================6. 执行自定义脚本========================\n"
+  log_with_style "INFO" "🛠️  4. 执行自定义脚本..."
   nohup ql extra >$dir_log/extra.log 2>&1 &
-  echo -e "自定义脚本后台执行中...\n"
 fi
 
-echo -e "############################################################\n"
-echo -e "容器启动成功..."
-echo -e "############################################################\n"
+log_with_style "SUCCESS" "🎉  容器启动成功!"
 
 crond -f >/dev/null
 

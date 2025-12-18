@@ -1,4 +1,4 @@
-import { fileExist, readDirs, readDir, rmPath } from '../config/util';
+import { fileExist, readDirs, readDir, rmPath, IFile } from '../config/util';
 import { Router, Request, Response, NextFunction } from 'express';
 import { Container } from 'typedi';
 import { Logger } from 'winston';
@@ -8,6 +8,7 @@ import { celebrate, Joi } from 'celebrate';
 import path, { join, parse } from 'path';
 import ScriptService from '../services/script';
 import multer from 'multer';
+import { writeFileWithLock } from '../shared/utils';
 const route = Router();
 
 const storage = multer.diskStorage({
@@ -23,55 +24,68 @@ const upload = multer({ storage: storage });
 export default (app: Router) => {
   app.use('/scripts', route);
 
-  route.get('/', async (req: Request, res: Response, next: NextFunction) => {
-    const logger: Logger = Container.get('logger');
-    try {
-      let result = [];
-      const blacklist = [
-        'node_modules',
-        '.git',
-        '.pnpm',
-        'pnpm-lock.yaml',
-        'yarn.lock',
-        'package-lock.json',
-      ];
-      if (req.query.path) {
-        const targetPath = path.join(
-          config.scriptPath,
-          req.query.path as string,
-        );
-        result = await readDir(targetPath, config.scriptPath, blacklist);
-      } else {
-        result = await readDirs(
-          config.scriptPath,
-          config.scriptPath,
-          blacklist,
-          (a, b) => {
-            if (a.type === b.type) {
-              return a.title.localeCompare(b.title);
-            } else {
-              return a.type === 'directory' ? -1 : 1;
-            }
-          },
-        );
+  route.get(
+    '/',
+    celebrate({
+      query: Joi.object({
+        path: Joi.string().optional().allow(''),
+      }),
+    }),
+    async (req: Request, res: Response, next: NextFunction) => {
+      const logger: Logger = Container.get('logger');
+      try {
+        let result: IFile[] = [];
+        const blacklist = [
+          'node_modules',
+          '.git',
+          '.pnpm',
+          'pnpm-lock.yaml',
+          'yarn.lock',
+          'package-lock.json',
+        ];
+        if (req.query.path) {
+          result = await readDir(
+            req.query.path as string,
+            config.scriptPath,
+            blacklist,
+          );
+        } else {
+          result = await readDirs(
+            config.scriptPath,
+            config.scriptPath,
+            blacklist,
+            (a, b) => {
+              if (a.type === b.type) {
+                return a.title.localeCompare(b.title);
+              } else {
+                return a.type === 'directory' ? -1 : 1;
+              }
+            },
+          );
+        }
+        res.send({
+          code: 200,
+          data: result,
+        });
+      } catch (e) {
+        logger.error('🔥 error: %o', e);
+        return next(e);
       }
-      res.send({
-        code: 200,
-        data: result,
-      });
-    } catch (e) {
-      logger.error('🔥 error: %o', e);
-      return next(e);
-    }
-  });
+    });
 
   route.get(
     '/detail',
+    celebrate({
+      query: Joi.object({
+        path: Joi.string().optional().allow(''),
+        file: Joi.string().required(),
+      }),
+    }),
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const scriptService = Container.get(ScriptService);
         const content = await scriptService.getFile(
-          req.query.path as string,
+          req.query?.path as string || '',
           req.query.file as string,
         );
         res.send({ code: 200, data: content });
@@ -83,11 +97,19 @@ export default (app: Router) => {
 
   route.get(
     '/:file',
+    celebrate({
+      params: Joi.object({
+        file: Joi.string().required(),
+      }),
+      query: Joi.object({
+        path: Joi.string().optional().allow(''),
+      }),
+    }),
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const scriptService = Container.get(ScriptService);
         const content = await scriptService.getFile(
-          req.query.path as string,
+          req.query?.path as string || '',
           req.params.file,
         );
         res.send({ code: 200, data: content });
@@ -100,8 +122,17 @@ export default (app: Router) => {
   route.post(
     '/',
     upload.single('file'),
+    celebrate({
+      body: Joi.object({
+        filename: Joi.string().required(),
+        path: Joi.string().optional().allow(''),
+        content: Joi.string().optional().allow(''),
+        originFilename: Joi.string().optional().allow(''),
+        directory: Joi.string().optional().allow(''),
+        file: Joi.string().optional().allow(''),
+      }),
+    }),
     async (req: Request, res: Response, next: NextFunction) => {
-      const logger: Logger = Container.get('logger');
       try {
         let { filename, path, content, originFilename, directory } =
           req.body as {
@@ -123,8 +154,8 @@ export default (app: Router) => {
         }
         if (config.writePathList.every((x) => !path.startsWith(x))) {
           return res.send({
-            code: 430,
-            message: '文件路径禁止访问',
+            code: 403,
+            message: '暂无权限',
           });
         }
 
@@ -145,6 +176,7 @@ export default (app: Router) => {
           path,
           `${originFilename.replace(/\//g, '')}`,
         );
+        await fs.mkdir(path, { recursive: true });
         const filePath = join(path, `${filename.replace(/\//g, '')}`);
         const fileExists = await fileExist(filePath);
         if (fileExists) {
@@ -156,7 +188,7 @@ export default (app: Router) => {
             await rmPath(originFilePath);
           }
         }
-        await fs.writeFile(filePath, content);
+        await writeFileWithLock(filePath, content);
         return res.send({ code: 200 });
       } catch (e) {
         return next(e);
@@ -174,15 +206,21 @@ export default (app: Router) => {
       }),
     }),
     async (req: Request, res: Response, next: NextFunction) => {
-      const logger: Logger = Container.get('logger');
       try {
         let { filename, content, path } = req.body as {
           filename: string;
           content: string;
           path: string;
         };
-        const filePath = join(config.scriptPath, path, filename);
-        await fs.writeFile(filePath, content);
+        const scriptService = Container.get(ScriptService);
+        const filePath = scriptService.checkFilePath(path, filename);
+        if (!filePath) {
+          return res.send({
+            code: 403,
+            message: '暂无权限',
+          });
+        }
+        await writeFileWithLock(filePath, content);
         return res.send({ code: 200 });
       } catch (e) {
         return next(e);
@@ -195,19 +233,27 @@ export default (app: Router) => {
     celebrate({
       body: Joi.object({
         filename: Joi.string().required(),
-        path: Joi.string().allow(''),
+        path: Joi.string().optional().allow(''),
         type: Joi.string().optional(),
       }),
     }),
     async (req: Request, res: Response, next: NextFunction) => {
-      const logger: Logger = Container.get('logger');
       try {
-        let { filename, path, type } = req.body as {
+        let { filename, path } = req.body as {
           filename: string;
           path: string;
-          type: string;
         };
-        const filePath = join(config.scriptPath, path, filename);
+        if (!path) {
+          path = '';
+        }
+        const scriptService = Container.get(ScriptService);
+        const filePath = scriptService.checkFilePath(path, filename);
+        if (!filePath) {
+          return res.send({
+            code: 403,
+            message: '暂无权限',
+          });
+        }
         await rmPath(filePath);
         res.send({ code: 200 });
       } catch (e) {
@@ -221,24 +267,30 @@ export default (app: Router) => {
     celebrate({
       body: Joi.object({
         filename: Joi.string().required(),
+        path: Joi.string().optional().allow(''),
       }),
     }),
     async (req: Request, res: Response, next: NextFunction) => {
-      const logger: Logger = Container.get('logger');
       try {
-        let { filename } = req.body as {
+        let { filename, path } = req.body as {
           filename: string;
+          path: string;
         };
-        const filePath = join(config.scriptPath, filename);
-        // const stats = fs.statSync(filePath);
-        // res.set({
-        //   'Content-Type': 'application/octet-stream', //告诉浏览器这是一个二进制文件
-        //   'Content-Disposition': 'attachment; filename=' + filename, //告诉浏览器这是一个需要下载的文件
-        //   'Content-Length': stats.size  //文件大小
-        // });
-        // fs.createReadStream(filePath).pipe(res);
+        if (!path) {
+          path = '';
+        }
+        const scriptService = Container.get(ScriptService);
+        const filePath = scriptService.checkFilePath(path, filename);
+        if (!filePath) {
+          return res.send({
+            code: 403,
+            message: '暂无权限',
+          });
+        }
         return res.download(filePath, filename, (err) => {
-          return next(err);
+          if (err) {
+            return next(err);
+          }
         });
       } catch (e) {
         return next(e);
@@ -259,9 +311,12 @@ export default (app: Router) => {
       const logger: Logger = Container.get('logger');
       try {
         let { filename, content, path } = req.body;
+        if (!path) {
+          path = '';
+        }
         const { name, ext } = parse(filename);
         const filePath = join(config.scriptPath, path, `${name}.swap${ext}`);
-        await fs.writeFile(filePath, content || '', { encoding: 'utf8' });
+        await writeFileWithLock(filePath, content || '');
 
         const scriptService = Container.get(ScriptService);
         const result = await scriptService.runScript(filePath);
@@ -284,6 +339,9 @@ export default (app: Router) => {
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         let { filename, path, pid } = req.body;
+        if (!path) {
+          path = '';
+        }
         const { name, ext } = parse(filename);
         const filePath = join(config.scriptPath, path, `${name}.swap${ext}`);
         const logPath = join(config.logPath, path, `${name}.swap`);
@@ -311,12 +369,14 @@ export default (app: Router) => {
     }),
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        let { filename, path, type, newFilename } = req.body as {
+        let { filename, path, newFilename } = req.body as {
           filename: string;
           path: string;
-          type: string;
           newFilename: string;
         };
+        if (!path) {
+          path = '';
+        }
         const filePath = join(config.scriptPath, path, filename);
         const newPath = join(config.scriptPath, path, newFilename);
         await fs.rename(filePath, newPath);

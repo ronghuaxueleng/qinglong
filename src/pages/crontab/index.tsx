@@ -1,64 +1,64 @@
-import intl from 'react-intl-universal';
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import useTableScrollHeight from '@/hooks/useTableScrollHeight';
+import { SharedContext } from '@/layouts';
+import { getCommandScript, getCrontabsNextDate } from '@/utils';
+import config from '@/utils/config';
+import { diffTime } from '@/utils/date';
+import { request } from '@/utils/http';
+import {
+  CheckCircleOutlined,
+  CheckOutlined,
+  ClockCircleOutlined,
+  CloseCircleOutlined,
+  CopyOutlined,
+  DeleteOutlined,
+  DownOutlined,
+  EditOutlined,
+  EllipsisOutlined,
+  FieldTimeOutlined,
+  Loading3QuartersOutlined,
+  PlusOutlined,
+  PushpinOutlined,
+  SettingOutlined,
+  StopOutlined,
+  UnorderedListOutlined,
+} from '@ant-design/icons';
+import { PageContainer } from '@ant-design/pro-layout';
+import { history, useOutletContext } from '@umijs/max';
 import {
   Button,
+  Dropdown,
+  Input,
+  MenuProps,
   message,
   Modal,
-  Table,
-  Tag,
   Space,
-  Tooltip,
-  Dropdown,
-  Menu,
-  Typography,
-  Input,
-  Popover,
-  Tabs,
+  Table,
   TablePaginationConfig,
-  MenuProps,
+  Tabs,
+  Tag,
+  Typography,
 } from 'antd';
-import {
-  ClockCircleOutlined,
-  Loading3QuartersOutlined,
-  CloseCircleOutlined,
-  FileTextOutlined,
-  EllipsisOutlined,
-  PlayCircleOutlined,
-  CheckCircleOutlined,
-  EditOutlined,
-  StopOutlined,
-  DeleteOutlined,
-  PauseCircleOutlined,
-  FieldTimeOutlined,
-  PushpinOutlined,
-  DownOutlined,
-  SettingOutlined,
-  PlusOutlined,
-  UnorderedListOutlined,
-  CheckOutlined,
-  CopyOutlined,
-} from '@ant-design/icons';
-import config from '@/utils/config';
-import { PageContainer } from '@ant-design/pro-layout';
-import { request } from '@/utils/http';
-import CronModal, { CronLabelModal } from './modal';
-import CronLogModal from './logModal';
-import CronDetailModal from './detail';
-import { diffTime } from '@/utils/date';
-import { history, useOutletContext } from '@umijs/max';
-import './index.less';
-import ViewCreateModal from './viewCreateModal';
-import ViewManageModal from './viewManageModal';
-import { FilterValue, SorterResult } from 'antd/lib/table/interface';
-import { SharedContext } from '@/layouts';
-import useTableScrollHeight from '@/hooks/useTableScrollHeight';
-import { getCommandScript, getCrontabsNextDate, parseCrontab } from '@/utils';
 import { ColumnProps } from 'antd/lib/table';
-import { useVT } from 'virtualizedtableforantd4';
-import { ICrontab, OperationName, OperationPath, CrontabStatus } from './type';
-import Name from '@/components/name';
+import { FilterValue, SorterResult } from 'antd/lib/table/interface';
 import dayjs from 'dayjs';
 import { noop, omit } from 'lodash';
+import React, { useEffect, useRef, useState } from 'react';
+import intl from 'react-intl-universal';
+import { useVT } from 'virtualizedtableforantd4';
+import { getScheduleType } from './const';
+import CronDetailModal from './detail';
+import './index.less';
+import CronLogModal from './logModal';
+import CronModal, { CronLabelModal } from './modal';
+import {
+  CrontabStatus,
+  ICrontab,
+  OperationName,
+  OperationPath,
+  ScheduleType,
+} from './type';
+import ViewCreateModal from './viewCreateModal';
+import ViewManageModal from './viewManageModal';
 
 const { Text, Paragraph, Link } = Typography;
 const { Search } = Input;
@@ -66,6 +66,7 @@ const SHOW_TAB_COUNT = 10;
 
 const Crontab = () => {
   const { headerStyle, isPhone, theme } = useOutletContext<SharedContext>();
+  const [allSubscriptions, setAllSubscriptions] = useState<any[]>([]);
   const columns: ColumnProps<ICrontab>[] = [
     {
       title: intl.get('名称'),
@@ -247,8 +248,8 @@ const Crontab = () => {
           >
             {record.last_execution_time
               ? dayjs(record.last_execution_time * 1000).format(
-                  'YYYY-MM-DD HH:mm:ss',
-                )
+                'YYYY-MM-DD HH:mm:ss',
+              )
               : '-'}
           </span>
         );
@@ -263,13 +264,21 @@ const Crontab = () => {
         },
       },
       render: (text, record) => {
-        return dayjs(record.nextRunTime).format('YYYY-MM-DD HH:mm:ss');
+        return record.nextRunTime
+          ? dayjs(record.nextRunTime).format('YYYY-MM-DD HH:mm:ss')
+          : '-';
       },
     },
     {
       title: intl.get('关联订阅'),
       width: 185,
       render: (text, record: any) => record?.subscription?.name || '-',
+      key: 'sub_id',
+      dataIndex: 'sub_id',
+      filters: allSubscriptions.map((sub) => ({
+        text: sub.name || sub.alias,
+        value: sub.id,
+      })),
     },
     {
       title: intl.get('操作'),
@@ -359,11 +368,10 @@ const Crontab = () => {
   const getCrons = () => {
     setLoading(true);
     const { page, size, sorter, filters } = pageConf;
-    let url = `${
-      config.apiPrefix
-    }crons?searchValue=${searchText}&page=${page}&size=${size}&filters=${JSON.stringify(
-      filters,
-    )}`;
+    let url = `${config.apiPrefix
+      }crons?searchValue=${searchText}&page=${page}&size=${size}&filters=${JSON.stringify(
+        filters,
+      )}`;
     if (sorter && sorter.column && sorter.order) {
       url += `&sorter=${JSON.stringify({
         field: sorter.column.key,
@@ -396,9 +404,14 @@ const Crontab = () => {
 
           setValue(
             data.map((x) => {
+              const scheduleType = getScheduleType(x.schedule);
+              const nextRunTime =
+                scheduleType === ScheduleType.Normal
+                  ? getCrontabsNextDate(x.schedule, x.extra_schedules)
+                  : null;
               return {
                 ...x,
-                nextRunTime: getCrontabsNextDate(x.schedule, x.extra_schedules),
+                nextRunTime,
                 subscription: subscriptionMap?.[x.sub_id],
               };
             }),
@@ -446,9 +459,6 @@ const Crontab = () => {
             }
           });
       },
-      onCancel() {
-        console.log('Cancel');
-      },
     });
   };
 
@@ -480,9 +490,6 @@ const Crontab = () => {
               }
             }
           });
-      },
-      onCancel() {
-        console.log('Cancel');
       },
     });
   };
@@ -517,17 +524,13 @@ const Crontab = () => {
             }
           });
       },
-      onCancel() {
-        console.log('Cancel');
-      },
     });
   };
 
   const enabledOrDisabledCron = (record: any, index: number) => {
     Modal.confirm({
-      title: `确认${
-        record.isDisabled === 1 ? intl.get('启用') : intl.get('禁用')
-      }`,
+      title: `确认${record.isDisabled === 1 ? intl.get('启用') : intl.get('禁用')
+        }`,
       content: (
         <>
           {intl.get('确认')}
@@ -542,8 +545,7 @@ const Crontab = () => {
       onOk() {
         request
           .put(
-            `${config.apiPrefix}crons/${
-              record.isDisabled === 1 ? 'enable' : 'disable'
+            `${config.apiPrefix}crons/${record.isDisabled === 1 ? 'enable' : 'disable'
             }`,
             [record.id],
           )
@@ -562,17 +564,13 @@ const Crontab = () => {
             }
           });
       },
-      onCancel() {
-        console.log('Cancel');
-      },
     });
   };
 
   const pinOrUnPinCron = (record: any, index: number) => {
     Modal.confirm({
-      title: `确认${
-        record.isPinned === 1 ? intl.get('取消置顶') : intl.get('置顶')
-      }`,
+      title: `确认${record.isPinned === 1 ? intl.get('取消置顶') : intl.get('置顶')
+        }`,
       content: (
         <>
           {intl.get('确认')}
@@ -587,8 +585,7 @@ const Crontab = () => {
       onOk() {
         request
           .put(
-            `${config.apiPrefix}crons/${
-              record.isPinned === 1 ? 'unpin' : 'pin'
+            `${config.apiPrefix}crons/${record.isPinned === 1 ? 'unpin' : 'pin'
             }`,
             [record.id],
           )
@@ -606,9 +603,6 @@ const Crontab = () => {
               }
             }
           });
-      },
-      onCancel() {
-        console.log('Cancel');
       },
     });
   };
@@ -731,9 +725,6 @@ const Crontab = () => {
             }
           });
       },
-      onCancel() {
-        console.log('Cancel');
-      },
     });
   };
 
@@ -758,9 +749,6 @@ const Crontab = () => {
               getCrons();
             }
           });
-      },
-      onCancel() {
-        console.log('Cancel');
       },
     });
   };
@@ -806,13 +794,27 @@ const Crontab = () => {
 
   useEffect(() => {
     if (viewConf && enabledCronViews && enabledCronViews.length > 0) {
-      const view = enabledCronViews.slice(SHOW_TAB_COUNT).find((x) => x.id === viewConf.id);
+      const view = enabledCronViews
+        .slice(SHOW_TAB_COUNT)
+        .find((x) => x.id === viewConf.id);
       setMoreMenuActive(!!view);
     }
   }, [viewConf, enabledCronViews]);
 
+  const getAllSubscriptions = () => {
+    request
+      .get(`${config.apiPrefix}subscriptions`)
+      .then(({ code, data }) => {
+        if (code === 200) {
+          setAllSubscriptions(data || []);
+        }
+      })
+      .catch(() => {});
+  };
+
   useEffect(() => {
     getCronViews();
+    getAllSubscriptions();
   }, []);
 
   const viewAction = (key: string) => {
@@ -1026,6 +1028,7 @@ const Crontab = () => {
         )}
         <Table
           columns={columns}
+          sortDirections={['descend', 'ascend']}
           pagination={{
             current: pageConf.page,
             pageSize: pageConf.size,
@@ -1049,55 +1052,58 @@ const Crontab = () => {
           components={isPhone || pageConf.size < 50 ? undefined : vt}
         />
       </div>
-      <CronLogModal
-        visible={isLogModalVisible}
-        handleCancel={() => {
-          getCronDetail(logCron);
-          setIsLogModalVisible(false);
-        }}
-        cron={logCron}
-      />
-      <CronModal
-        visible={isModalVisible}
-        handleCancel={handleCancel}
-        cron={editedCron}
-      />
-      <CronLabelModal
-        visible={isLabelModalVisible}
-        handleCancel={(needUpdate?: boolean) => {
-          setIsLabelModalVisible(false);
-          if (needUpdate) {
-            getCrons();
-          }
-        }}
-        ids={selectedRowIds}
-      />
-      <CronDetailModal
-        visible={isDetailModalVisible}
-        handleCancel={() => {
-          setIsDetailModalVisible(false);
-        }}
-        cron={detailCron}
-        theme={theme}
-        isPhone={isPhone}
-      />
-      <ViewCreateModal
-        visible={isCreateViewModalVisible}
-        handleCancel={(data) => {
-          setIsCreateViewModalVisible(false);
-          getCronViews();
-        }}
-      />
-      <ViewManageModal
-        cronViews={cronViews}
-        visible={isViewManageModalVisible}
-        handleCancel={() => {
-          setIsViewManageModalVisible(false);
-        }}
-        cronViewChange={(data) => {
-          getCronViews();
-        }}
-      />
+      {isLogModalVisible && (
+        <CronLogModal
+          handleCancel={() => {
+            getCronDetail(logCron);
+            setIsLogModalVisible(false);
+          }}
+          cron={logCron}
+        />
+      )}
+      {isModalVisible && (
+        <CronModal handleCancel={handleCancel} cron={editedCron} />
+      )}
+      {isLabelModalVisible && (
+        <CronLabelModal
+          handleCancel={(needUpdate?: boolean) => {
+            setIsLabelModalVisible(false);
+            if (needUpdate) {
+              getCrons();
+            }
+          }}
+          ids={selectedRowIds}
+        />
+      )}
+      {isDetailModalVisible && (
+        <CronDetailModal
+          handleCancel={() => {
+            setIsDetailModalVisible(false);
+          }}
+          cron={detailCron}
+          theme={theme}
+          isPhone={isPhone}
+        />
+      )}
+      {isCreateViewModalVisible && (
+        <ViewCreateModal
+          handleCancel={(data) => {
+            setIsCreateViewModalVisible(false);
+            getCronViews();
+          }}
+        />
+      )}
+      {isViewManageModalVisible && (
+        <ViewManageModal
+          cronViews={cronViews}
+          handleCancel={() => {
+            setIsViewManageModalVisible(false);
+          }}
+          cronViewChange={(data) => {
+            getCronViews();
+          }}
+        />
+      )}
     </PageContainer>
   );
 };

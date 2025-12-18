@@ -1,8 +1,9 @@
 import path from 'path';
 import fs from 'fs/promises';
+import os from 'os';
 import chokidar from 'chokidar';
 import config from '../config/index';
-import { fileExist, promiseExec, rmPath } from '../config/util';
+import Logger from './logger';
 
 async function linkToNodeModule(src: string, dst?: string) {
   const target = path.join(config.rootPath, 'node_modules', dst || src);
@@ -13,12 +14,22 @@ async function linkToNodeModule(src: string, dst?: string) {
     if (!stats) {
       await fs.symlink(source, target, 'dir');
     }
-  } catch (error) {}
+  } catch (error) { }
 }
 
 async function linkCommand() {
-  const commandPath = await promiseExec('which node');
-  const commandDir = path.dirname(commandPath);
+  const homeDir = os.homedir();
+  let userBinDir = path.join(homeDir, 'bin');
+
+  try {
+    await fs.mkdir(userBinDir, { recursive: true });
+    await linkCommandToDir(userBinDir);
+  } catch (error) {
+    Logger.error('Linking command failed:', error);
+  }
+}
+
+async function linkCommandToDir(commandDir: string) {
   const linkShell = [
     {
       src: 'update.sh',
@@ -36,6 +47,13 @@ async function linkCommand() {
     const source = path.join(config.rootPath, 'shell', link.src);
     const target = path.join(commandDir, link.dest);
     const tmpTarget = path.join(commandDir, link.tmp);
+    try {
+      const stats = await fs.lstat(tmpTarget);
+      if (stats) {
+        await fs.unlink(tmpTarget);
+      }
+    } catch (error) { }
+
     await fs.symlink(source, tmpTarget);
     await fs.rename(tmpTarget, target);
   }
@@ -52,6 +70,6 @@ export default async (src: string = 'deps') => {
   });
 
   watcher
-    .on('add', (path) => linkToNodeModule(src))
-    .on('change', (path) => linkToNodeModule(src));
+    .on('add', () => linkToNodeModule(src))
+    .on('change', () => linkToNodeModule(src));
 };

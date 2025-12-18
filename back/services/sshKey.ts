@@ -7,6 +7,7 @@ import { Subscription } from '../data/subscription';
 import { formatUrl } from '../config/subscription';
 import config from '../config';
 import { fileExist, rmPath } from '../config/util';
+import { writeFileWithLock } from '../shared/utils';
 
 @Service()
 export default class SshKeyService {
@@ -25,13 +26,13 @@ export default class SshKeyService {
     if (_exist) {
       config = await fs.readFile(this.sshConfigFilePath, { encoding: 'utf-8' });
     } else {
-      await fs.writeFile(this.sshConfigFilePath, '');
+      await writeFileWithLock(this.sshConfigFilePath, '', { mode: '600' });
     }
     if (!config.includes(this.sshConfigHeader)) {
-      await fs.writeFile(
+      await writeFileWithLock(
         this.sshConfigFilePath,
         `${this.sshConfigHeader}\n\n${config}`,
-        { encoding: 'utf-8' },
+        { mode: '600' },
       );
     }
   }
@@ -41,10 +42,13 @@ export default class SshKeyService {
     key: string,
   ): Promise<void> {
     try {
-      await fs.writeFile(path.join(this.sshPath, alias), `${key}${os.EOL}`, {
-        encoding: 'utf8',
-        mode: '400',
-      });
+      await writeFileWithLock(
+        path.join(this.sshPath, alias),
+        `${key}${os.EOL}`,
+        {
+          mode: '400',
+        },
+      );
     } catch (error) {
       this.logger.error('生成私钥文件失败', error);
     }
@@ -74,11 +78,12 @@ export default class SshKeyService {
       this.sshPath,
       alias,
     )}\n    StrictHostKeyChecking no\n${proxyStr}`;
-    await fs.writeFile(
+    await writeFileWithLock(
       `${path.join(this.sshPath, `${alias}.config`)}`,
       config,
       {
         encoding: 'utf8',
+        mode: '600',
       },
     );
   }
@@ -102,7 +107,11 @@ export default class SshKeyService {
     await this.generateSingleSshConfig(alias, host, proxy);
   }
 
-  public async removeSSHKey(alias: string, host: string, proxy?: string): Promise<void> {
+  public async removeSSHKey(
+    alias: string,
+    host: string,
+    proxy?: string,
+  ): Promise<void> {
     await this.removePrivateKeyFile(alias);
     await this.removeSshConfig(alias);
   }
@@ -121,5 +130,33 @@ export default class SshKeyService {
         await this.generateSingleSshConfig(alias, host, proxy);
       }
     }
+  }
+
+  public async addGlobalSSHKey(key: string, alias: string): Promise<void> {
+    await this.generatePrivateKeyFile(`~global_${alias}`, key);
+    // Create a global SSH config entry that matches all hosts
+    // This allows the key to be used for any Git repository
+    await this.generateGlobalSshConfig(`~global_${alias}`);
+  }
+
+  public async removeGlobalSSHKey(alias: string): Promise<void> {
+    await this.removePrivateKeyFile(`~global_${alias}`);
+    await this.removeSshConfig(`~global_${alias}`);
+  }
+
+  private async generateGlobalSshConfig(alias: string) {
+    // Create a config that matches all hosts, making this key globally available
+    const config = `Host *\n    IdentityFile ${path.join(
+      this.sshPath,
+      alias,
+    )}\n    StrictHostKeyChecking no\n`;
+    await writeFileWithLock(
+      `${path.join(this.sshPath, `${alias}.config`)}`,
+      config,
+      {
+        encoding: 'utf8',
+        mode: '600',
+      },
+    );
   }
 }

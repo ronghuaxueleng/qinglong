@@ -2,6 +2,7 @@ import { Container } from 'typedi';
 import SystemService from '../services/system';
 import ScheduleService, { ScheduleTaskType } from '../services/schedule';
 import SubscriptionService from '../services/subscription';
+import SshKeyService from '../services/sshKey';
 import config from '../config';
 import { fileExist } from '../config/util';
 import { join } from 'path';
@@ -10,6 +11,7 @@ export default async () => {
   const systemService = Container.get(SystemService);
   const scheduleService = Container.get(ScheduleService);
   const subscriptionService = Container.get(SubscriptionService);
+  const sshKeyService = Container.get(SshKeyService);
 
   // 生成内置token
   let tokenCommand = `ts-node-transpile-only ${join(
@@ -38,21 +40,30 @@ export default async () => {
 
   // 运行删除日志任务
   const data = await systemService.getSystemConfig();
-  if (data && data.info && data.info.logRemoveFrequency) {
-    const rmlogCron = {
-      id: data.id as number,
-      name: '删除日志',
-      command: `ql rmlog ${data.info.logRemoveFrequency}`,
-      runOrigin: 'system' as const,
-    };
-    await scheduleService.cancelIntervalTask(rmlogCron);
-    scheduleService.createIntervalTask(
-      rmlogCron,
-      {
-        days: data.info.logRemoveFrequency,
-      },
-      true,
-    );
+  if (data && data.info) {
+    if (data.info.logRemoveFrequency) {
+      const rmlogCron = {
+        id: data.id as number,
+        name: '删除日志',
+        command: `ql rmlog ${data.info.logRemoveFrequency}`,
+        runOrigin: 'system' as const,
+      };
+      await scheduleService.cancelIntervalTask(rmlogCron);
+      scheduleService.createIntervalTask(
+        rmlogCron,
+        {
+          days: data.info.logRemoveFrequency,
+        },
+        true,
+      );
+    }
+
+    systemService.updateTimezone(data.info);
+    
+    // Apply global SSH key if configured
+    if (data.info.globalSshKey) {
+      await sshKeyService.addGlobalSSHKey(data.info.globalSshKey, 'global');
+    }
   }
 
   await subscriptionService.setSshConfig();

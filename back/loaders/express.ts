@@ -3,19 +3,14 @@ import bodyParser from 'body-parser';
 import cors from 'cors';
 import routes from '../api';
 import config from '../config';
-import jwt, { UnauthorizedError } from 'express-jwt';
-import fs from 'fs/promises';
-import { getPlatform, getToken, safeJSONParse } from '../config/util';
-import Container from 'typedi';
-import OpenService from '../services/open';
+import { UnauthorizedError, expressjwt } from 'express-jwt';
+import { getPlatform, getToken } from '../config/util';
 import rewrite from 'express-urlrewrite';
-import UserService from '../services/user';
-import * as Sentry from '@sentry/node';
-import { EnvModel } from '../data/env';
 import { errors } from 'celebrate';
-import { createProxyMiddleware } from 'http-proxy-middleware';
 import { serveEnv } from '../config/serverEnv';
-import Logger from './logger';
+import { IKeyvStore, shareStore } from '../shared/store';
+import { isValidToken } from '../shared/auth';
+import path from 'path';
 
 export default ({ app }: { app: Application }) => {
   app.set('trust proxy', 'loopback');
@@ -23,25 +18,18 @@ export default ({ app }: { app: Application }) => {
   app.get(`${config.api.prefix}/env.js`, serveEnv);
   app.use(`${config.api.prefix}/static`, express.static(config.uploadPath));
 
-  app.use(
-    '/api/public',
-    createProxyMiddleware({
-      target: `http://0.0.0.0:${config.publicPort}/api`,
-      changeOrigin: true,
-      pathRewrite: { '/api/public': '' },
-      logProvider: () => Logger,
-    }),
-  );
-
   app.use(bodyParser.json({ limit: '50mb' }));
   app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
+  const frontendPath = path.join(config.rootPath, 'static/dist');
+  app.use(express.static(frontendPath));
+
   app.use(
-    jwt({
-      secret: config.secret,
+    expressjwt({
+      secret: config.jwt.secret,
       algorithms: ['HS384'],
     }).unless({
-      path: [...config.apiWhiteList, /^\/open\//],
+      path: [...config.apiWhiteList, /^\/(?!api\/).*/],
     }),
   );
 
@@ -55,11 +43,17 @@ export default ({ app }: { app: Application }) => {
     return next();
   });
 
-  app.use(async (req, res, next) => {
+  app.use(async (req: Request, res, next) => {
+    if (!['/open/', '/api/'].some((x) => req.path.startsWith(x))) {
+      return next();
+    }
+
     const headerToken = getToken(req);
     if (req.path.startsWith('/open/')) {
-      const openService = Container.get(OpenService);
-      const doc = await openService.findTokenByValue(headerToken);
+      const apps = await shareStore.getApps();
+      const doc = apps?.filter((x) =>
+        x.tokens?.find((y) => y.value === headerToken),
+      )?.[0];
       if (doc && doc.tokens && doc.tokens.length > 0) {
         const currentToken = doc.tokens.find((x) => x.value === headerToken);
         const keyMatch = req.path.match(/\/open\/([a-z]+)\/*/);
@@ -83,12 +77,9 @@ export default ({ app }: { app: Application }) => {
       return next();
     }
 
-    const data = await fs.readFile(config.authConfigFile, 'utf8');
-    if (data && headerToken) {
-      const { token = '', tokens = {} } = safeJSONParse(data);
-      if (headerToken === token || tokens[req.platform] === headerToken) {
-        return next();
-      }
+    const authInfo = await shareStore.getAuthInfo();
+    if (isValidToken(authInfo, headerToken, req.platform)) {
+      return next();
     }
 
     const errorCode = headerToken ? 'invalid_token' : 'credentials_required';
@@ -103,8 +94,8 @@ export default ({ app }: { app: Application }) => {
     if (!['/api/user/init', '/api/user/notification/init'].includes(req.path)) {
       return next();
     }
-    const userService = Container.get(UserService);
-    const authInfo = await userService.getUserInfo();
+    const authInfo =
+      (await shareStore.getAuthInfo()) || ({} as IKeyvStore['authInfo']);
 
     let isInitialized = true;
     if (
@@ -125,15 +116,18 @@ export default ({ app }: { app: Application }) => {
   app.use(rewrite('/open/*', '/api/$1'));
   app.use(config.api.prefix, routes());
 
-  app.use((req, res, next) => {
-    const err: any = new Error('Not Found');
-    err['status'] = 404;
-    next(err);
+  app.get('*', (_, res, next) => {
+    const indexPath = path.join(frontendPath, 'index.html');
+    res.sendFile(indexPath, (err) => {
+      if (err) {
+        const err: any = new Error('Not Found');
+        err['status'] = 404;
+        next(err);
+      }
+    });
   });
 
   app.use(errors());
-
-  Sentry.setupExpressErrorHandler(app);
 
   app.use(
     (
@@ -164,8 +158,8 @@ export default ({ app }: { app: Application }) => {
           .status(500)
           .send({
             code: 400,
-            message: `${err.name} ${err.message}`,
-            validation: err.errors,
+            message: `${err.message}`,
+            errors: err.errors,
           })
           .end();
       }
